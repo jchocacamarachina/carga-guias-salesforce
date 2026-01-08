@@ -1,0 +1,5 @@
+flask
+simple-salesforce
+werkzeug
+gunicorn
+requests
