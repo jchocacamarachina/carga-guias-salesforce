@@ -28,7 +28,7 @@ def index():
 
 @app.route("/get_order_name/<number>", methods=["GET"])
 def get_order_name(number):
-    op_completa = f"OP-{number}"
+    op_completa = f"OP-00{number}"
     try:
         query = f"SELECT Name FROM Orden_Proveedor__c WHERE Orden_Proveedor_Nro__c = '{op_completa}'"
         result = sf.query_all(query)
