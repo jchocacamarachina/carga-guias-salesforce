@@ -1,123 +1,288 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Carga de Guías</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Carga de Guías (Drive)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
+
 <body class="bg-slate-100 min-h-screen flex items-center justify-center p-4">
+  <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-xl border-t-8 border-blue-600">
+    <h1 class="text-xl font-black text-center text-gray-800 mb-6 uppercase tracking-wider">
+      Guías de Entrega (Google Drive)
+    </h1>
 
-    <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md border-t-8 border-blue-600">
-        <h1 class="text-xl font-black text-center text-gray-800 mb-6 uppercase tracking-wider">Guías de Entrega</h1>
-
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            {% for category, message in messages %}
-              <div class="p-4 mb-6 rounded-lg font-bold text-center {% if category == 'success' %}bg-green-50 text-green-700 border border-green-200{% else %}bg-red-50 text-red-700 border border-red-200{% endif %}">
-                {{ message }}
-              </div>
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
-
-        <div class="space-y-6">
-            <div>
-                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Paso 1: Buscar Orden</label>
-                <div class="flex gap-2">
-                    <div class="flex flex-1 shadow-sm">
-                        <span class="inline-flex items-center px-3 bg-gray-100 border border-r-0 border-gray-300 rounded-l-lg text-gray-500 font-bold">OP-</span>
-                        <input
-                            type="text"
-                            id="order_number_input"
-                            placeholder="00077845"
-                            class="flex-1 border-gray-300 border p-3 rounded-r-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                        >
-                    </div>
-                    <button type="button" onclick="buscarOrden()"
-                        class="bg-blue-600 text-white px-4 rounded-lg font-bold hover:bg-blue-700 transition-colors">
-                        Buscar
-                    </button>
-                </div>
-
-                <p id="op_name_display" class="mt-3 text-sm font-bold text-gray-700 bg-gray-50 p-2 rounded hidden border border-dashed border-gray-300"></p>
-            </div>
-
-            <hr class="border-gray-100">
-
-            <form id="upload_form" action="/upload" method="POST" enctype="multipart/form-data"
-                  class="space-y-6 opacity-30 pointer-events-none transition-opacity duration-500">
-                <input type="hidden" name="order_number" id="hidden_order_number">
-
-                <div>
-                    <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Paso 2: Foto de la Guía</label>
-                    <input type="file" name="photo" id="photo_input" accept="image/*" capture="environment"
-                        class="block w-full text-sm text-gray-500 file:mr-4 file:py-3 file:px-4 file:rounded-lg file:border-0 file:bg-blue-100 file:text-blue-700 font-bold">
-                </div>
-
-                <button id="submit_btn" type="submit" disabled
-                    class="w-full bg-green-600 text-white py-4 rounded-xl font-black text-lg shadow-lg hover:bg-green-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                    GUARDAR FOTO
-                </button>
-            </form>
+    <div class="space-y-6">
+      <!-- Paso 1 -->
+      <div>
+        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Paso 1: Buscar Orden</label>
+        <div class="flex gap-2">
+          <div class="flex flex-1 shadow-sm">
+            <span class="inline-flex items-center px-3 bg-gray-100 border border-r-0 border-gray-300 rounded-l-lg text-gray-500 font-bold">OP-</span>
+            <input
+              type="text"
+              id="order_number_input"
+              placeholder="00077845"
+              class="flex-1 border-gray-300 border p-3 rounded-r-lg focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+          </div>
+          <button type="button" onclick="buscarOrden()"
+            class="bg-blue-600 text-white px-4 rounded-lg font-bold hover:bg-blue-700 transition-colors">
+            Buscar
+          </button>
         </div>
+        <p id="op_name_display" class="mt-3 text-sm font-bold text-gray-700 bg-gray-50 p-2 rounded hidden border border-dashed border-gray-300"></p>
+      </div>
+
+      <hr class="border-gray-100" />
+
+      <!-- Paso 2 + 3 -->
+      <form id="upload_form" class="space-y-6 opacity-30 pointer-events-none transition-opacity duration-500">
+        <input type="hidden" name="order_number" id="hidden_order_number" />
+
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Paso 2: Selecciona Fotos</label>
+          <input
+            type="file"
+            name="photos"
+            id="photos_input"
+            accept="image/*"
+            multiple
+            class="block w-full text-sm text-gray-500 file:mr-4 file:py-3 file:px-4 file:rounded-lg file:border-0 file:bg-blue-100 file:text-blue-700 font-bold"
+          />
+          <p class="text-xs text-gray-500 mt-2">Solo imágenes. Puedes seleccionar varias a la vez.</p>
+        </div>
+
+        <!-- Preview -->
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Previsualización</label>
+          <div id="preview_grid" class="grid grid-cols-3 gap-3"></div>
+          <p id="empty_preview" class="text-sm text-gray-500 bg-gray-50 border border-dashed rounded-lg p-3">
+            Aún no seleccionas fotos.
+          </p>
+        </div>
+
+        <button id="submit_btn" type="button" disabled
+          class="w-full bg-green-600 text-white py-4 rounded-xl font-black text-lg shadow-lg hover:bg-green-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+          SUBIR FOTOS
+        </button>
+
+        <!-- Estado -->
+        <div class="bg-slate-50 border rounded-xl p-4">
+          <div class="flex items-center justify-between mb-2">
+            <p class="font-black text-gray-700">Estado</p>
+            <button id="clear_log" type="button" class="text-xs font-bold text-blue-600 hover:underline">Limpiar</button>
+          </div>
+          <div id="status_log" class="text-sm text-gray-700 space-y-1 max-h-56 overflow-auto"></div>
+        </div>
+      </form>
     </div>
+  </div>
 
-    <script>
-        const input = document.getElementById('order_number_input');
-        const display = document.getElementById('op_name_display');
-        const form = document.getElementById('upload_form');
-        const hiddenInput = document.getElementById('hidden_order_number');
-        const submitBtn = document.getElementById('submit_btn');
+  <script>
+    const input = document.getElementById('order_number_input');
+    const display = document.getElementById('op_name_display');
+    const form = document.getElementById('upload_form');
+    const hiddenInput = document.getElementById('hidden_order_number');
 
-        function bloquearForm() {
-            form.classList.add('opacity-30', 'pointer-events-none');
-            submitBtn.disabled = true;
-            hiddenInput.value = "";
+    const photosInput = document.getElementById('photos_input');
+    const previewGrid = document.getElementById('preview_grid');
+    const emptyPreview = document.getElementById('empty_preview');
+
+    const submitBtn = document.getElementById('submit_btn');
+    const statusLog = document.getElementById('status_log');
+    const clearLogBtn = document.getElementById('clear_log');
+
+    let selectedFiles = [];
+    let sse = null;
+
+    function bloquearForm() {
+      form.classList.add('opacity-30', 'pointer-events-none');
+      submitBtn.disabled = true;
+      hiddenInput.value = "";
+      selectedFiles = [];
+      renderPreview();
+    }
+
+    function habilitarForm() {
+      form.classList.remove('opacity-30', 'pointer-events-none');
+      updateSubmitState();
+    }
+
+    function log(msg, kind="info") {
+      const el = document.createElement("div");
+      el.className = "leading-snug";
+      if (kind === "error") el.classList.add("text-red-700", "font-bold");
+      if (kind === "warn") el.classList.add("text-amber-700", "font-bold");
+      if (kind === "done") el.classList.add("text-green-700", "font-bold");
+      el.textContent = msg;
+      statusLog.appendChild(el);
+      statusLog.scrollTop = statusLog.scrollHeight;
+    }
+
+    clearLogBtn.addEventListener("click", () => statusLog.innerHTML = "");
+
+    input.addEventListener('input', () => {
+      display.classList.add('hidden');
+      bloquearForm();
+    });
+
+    function buscarOrden() {
+      const num = input.value.trim();
+      if (!num) return alert("Ingresa un número");
+
+      display.classList.remove('hidden');
+      display.innerText = "🔍 Buscando...";
+      display.style.color = "#4b5563";
+
+      bloquearForm();
+
+      fetch(`/get_order_name/${encodeURIComponent(num)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            display.innerText = "✅ Orden: " + data.name;
+            display.style.color = "#059669";
+            hiddenInput.value = num;
+            habilitarForm();
+          } else {
+            display.innerText = "❌ Orden no encontrada";
+            display.style.color = "#dc2626";
+            bloquearForm();
+          }
+        })
+        .catch(() => {
+          display.innerText = "⚠️ Error consultando la orden";
+          display.style.color = "#dc2626";
+          bloquearForm();
+        });
+    }
+
+    function updateSubmitState() {
+      const okOrder = hiddenInput.value.trim().length > 0;
+      const okFiles = selectedFiles.length > 0;
+      submitBtn.disabled = !(okOrder && okFiles);
+    }
+
+    function renderPreview() {
+      previewGrid.innerHTML = "";
+
+      if (!selectedFiles.length) {
+        emptyPreview.classList.remove("hidden");
+        previewGrid.classList.add("hidden");
+        updateSubmitState();
+        return;
+      }
+
+      emptyPreview.classList.add("hidden");
+      previewGrid.classList.remove("hidden");
+
+      selectedFiles.forEach((file, idx) => {
+        const card = document.createElement("div");
+        card.className = "relative rounded-xl overflow-hidden border bg-white shadow-sm";
+
+        const img = document.createElement("img");
+        img.className = "w-full h-28 object-cover";
+        img.src = URL.createObjectURL(file);
+
+        const footer = document.createElement("div");
+        footer.className = "p-2 text-xs text-gray-600 font-bold truncate";
+        footer.title = file.name;
+        footer.textContent = file.name;
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "absolute top-2 right-2 bg-black/70 text-white w-7 h-7 rounded-full font-black hover:bg-black";
+        btn.textContent = "×";
+        btn.onclick = () => {
+          selectedFiles.splice(idx, 1);
+          renderPreview();
+        };
+
+        card.appendChild(img);
+        card.appendChild(btn);
+        card.appendChild(footer);
+        previewGrid.appendChild(card);
+      });
+
+      updateSubmitState();
+    }
+
+    photosInput.addEventListener("change", () => {
+      const files = Array.from(photosInput.files || []);
+      const onlyImages = files.filter(f => (f.type || "").startsWith("image/"));
+      selectedFiles = onlyImages;
+      renderPreview();
+    });
+
+    submitBtn.addEventListener("click", async () => {
+      if (submitBtn.disabled) return;
+
+      if (sse) { sse.close(); sse = null; }
+
+      statusLog.innerHTML = "";
+      log("⏳ Iniciando proceso...");
+
+      const fd = new FormData();
+      fd.append("order_number", hiddenInput.value.trim());
+      selectedFiles.forEach(f => fd.append("photos", f, f.name));
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "SUBIENDO...";
+
+      try {
+        const res = await fetch("/start_upload", { method: "POST", body: fd });
+        const data = await res.json();
+
+        if (!data.success) {
+          log("❌ " + (data.error || "Error iniciando upload"), "error");
+          submitBtn.textContent = "SUBIR FOTOS";
+          updateSubmitState();
+          return;
         }
 
-        // Si el usuario cambia el número, fuerza re-buscar
-        input.addEventListener('input', () => {
-            display.classList.add('hidden');
-            bloquearForm();
+        const jobId = data.job_id;
+        log("📌 Job: " + jobId);
+
+        sse = new EventSource(`/progress/${jobId}`);
+
+        sse.addEventListener("message", (e) => log(e.data));
+        sse.addEventListener("warn", (e) => log(e.data, "warn"));
+        sse.addEventListener("error", (e) => log(e.data, "error"));
+        sse.addEventListener("done", (e) => log(e.data, "done"));
+
+        sse.addEventListener("final", (e) => {
+          try {
+            const payload = JSON.parse(e.data);
+            if (payload.ok) {
+              log("✅ Todo OK.", "done");
+              if (payload.result && payload.result.folder_link) {
+                log("📁 Carpeta Drive: " + payload.result.folder_link, "done");
+              }
+              selectedFiles = [];
+              photosInput.value = "";
+              renderPreview();
+            } else {
+              log("❌ Terminó con error.", "error");
+            }
+          } catch {
+            log("⚠️ Final recibido, pero no se pudo parsear.", "warn");
+          }
+
+          if (sse) { sse.close(); sse = null; }
+          submitBtn.textContent = "SUBIR FOTOS";
+          updateSubmitState();
         });
 
-        function buscarOrden() {
-            const num = input.value.trim();
-            if (!num) return alert("Ingresa un número");
+      } catch (err) {
+        log("⚠️ Error de red: " + err.message, "error");
+        submitBtn.textContent = "SUBIR FOTOS";
+        updateSubmitState();
+      }
+    });
 
-            display.classList.remove('hidden');
-            display.innerText = "🔍 Buscando...";
-            display.style.color = "#4b5563";
-
-            bloquearForm();
-
-            fetch(`/get_order_name/${encodeURIComponent(num)}`)
-                .then(res => res.json())
-                .then(data => {
-                    if (data.success) {
-                        display.innerText = "✅ Orden: " + data.name;
-                        display.style.color = "#059669";
-
-                        // Activar formulario
-                        form.classList.remove('opacity-30', 'pointer-events-none');
-                        submitBtn.disabled = false;
-
-                        // Guardamos el número "crudo" que el usuario escribe
-                        // (el backend lo normaliza a OP-00...)
-                        hiddenInput.value = num;
-                    } else {
-                        display.innerText = "❌ Orden no encontrada";
-                        display.style.color = "#dc2626";
-                        bloquearForm();
-                    }
-                })
-                .catch(() => {
-                    display.innerText = "⚠️ Error consultando la orden";
-                    display.style.color = "#dc2626";
-                    bloquearForm();
-                });
-        }
-    </script>
+    bloquearForm();
+  </script>
 </body>
 </html>
