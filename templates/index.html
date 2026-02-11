@@ -41,17 +41,49 @@
       <form id="upload_form" class="space-y-6 opacity-30 pointer-events-none transition-opacity duration-500">
         <input type="hidden" name="order_number" id="hidden_order_number" />
 
+        <!-- Tipo (radios) -->
         <div>
-          <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Paso 2: Selecciona Fotos</label>
+          <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Tipo</label>
+          <div class="flex gap-6 items-center">
+            <label class="flex items-center gap-2 font-bold text-gray-700">
+              <input type="radio" name="folder_mode" value="envio_cliente" checked class="h-4 w-4">
+              Envio Cliente
+            </label>
+            <label class="flex items-center gap-2 font-bold text-gray-700">
+              <input type="radio" name="folder_mode" value="respaldo" class="h-4 w-4">
+              Respaldo
+            </label>
+          </div>
+        </div>
+
+        <!-- Captura por cámara (cola) -->
+        <div>
+          <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Paso 2: Tomar Fotos</label>
+
+          <div class="flex gap-3">
+            <button id="take_photo_btn" type="button"
+              class="flex-1 bg-blue-600 text-white py-3 rounded-xl font-black shadow-lg hover:bg-blue-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              TOMAR FOTO
+            </button>
+
+            <button id="clear_photos_btn" type="button"
+              class="bg-gray-100 text-gray-700 py-3 px-4 rounded-xl font-black hover:bg-gray-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              LIMPIAR
+            </button>
+          </div>
+
+          <p class="text-xs text-gray-500 mt-2">
+            Se abre la cámara y cada foto tomada se agrega a la cola. Luego puedes borrar antes de subir.
+          </p>
+
+          <!-- Input oculto que abre cámara -->
           <input
             type="file"
-            name="photos"
-            id="photos_input"
+            id="camera_input"
             accept="image/*"
-            multiple
-            class="block w-full text-sm text-gray-500 file:mr-4 file:py-3 file:px-4 file:rounded-lg file:border-0 file:bg-blue-100 file:text-blue-700 font-bold"
+            capture="environment"
+            class="hidden"
           />
-          <p class="text-xs text-gray-500 mt-2">Solo imágenes. Puedes seleccionar varias a la vez.</p>
         </div>
 
         <!-- Preview -->
@@ -86,7 +118,10 @@
     const form = document.getElementById('upload_form');
     const hiddenInput = document.getElementById('hidden_order_number');
 
-    const photosInput = document.getElementById('photos_input');
+    const cameraInput = document.getElementById('camera_input');
+    const takePhotoBtn = document.getElementById('take_photo_btn');
+    const clearPhotosBtn = document.getElementById('clear_photos_btn');
+
     const previewGrid = document.getElementById('preview_grid');
     const emptyPreview = document.getElementById('empty_preview');
 
@@ -163,6 +198,8 @@
       const okOrder = hiddenInput.value.trim().length > 0;
       const okFiles = selectedFiles.length > 0;
       submitBtn.disabled = !(okOrder && okFiles);
+      clearPhotosBtn.disabled = !(okOrder && okFiles);
+      takePhotoBtn.disabled = !okOrder;
     }
 
     function renderPreview() {
@@ -209,10 +246,37 @@
       updateSubmitState();
     }
 
-    photosInput.addEventListener("change", () => {
-      const files = Array.from(photosInput.files || []);
-      const onlyImages = files.filter(f => (f.type || "").startsWith("image/"));
-      selectedFiles = onlyImages;
+    // Abrir cámara al apretar el botón
+    takePhotoBtn.addEventListener("click", () => {
+      if (!hiddenInput.value.trim()) return;
+      // reset para permitir tomar la misma foto de nuevo si el SO recicla nombre
+      cameraInput.value = "";
+      cameraInput.click();
+    });
+
+    // Al tomar foto, se agrega a la cola
+    cameraInput.addEventListener("change", async () => {
+      const file = (cameraInput.files && cameraInput.files[0]) ? cameraInput.files[0] : null;
+      if (!file) return;
+
+      if (!(file.type || "").startsWith("image/")) {
+        alert("Solo imágenes.");
+        return;
+      }
+
+      // Renombrar para evitar nombres repetidos en iPhone (IMG_0001 etc.)
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const newName = `foto_${stamp}.${ext}`;
+
+      const renamed = new File([file], newName, { type: file.type, lastModified: Date.now() });
+      selectedFiles.push(renamed);
+
+      renderPreview();
+    });
+
+    clearPhotosBtn.addEventListener("click", () => {
+      selectedFiles = [];
       renderPreview();
     });
 
@@ -226,6 +290,10 @@
 
       const fd = new FormData();
       fd.append("order_number", hiddenInput.value.trim());
+
+      const mode = document.querySelector('input[name="folder_mode"]:checked')?.value || "envio_cliente";
+      fd.append("folder_mode", mode);
+
       selectedFiles.forEach(f => fd.append("photos", f, f.name));
 
       submitBtn.disabled = true;
@@ -261,7 +329,6 @@
                 log("📁 Carpeta Drive: " + payload.result.folder_link, "done");
               }
               selectedFiles = [];
-              photosInput.value = "";
               renderPreview();
             } else {
               log("❌ Terminó con error.", "error");

@@ -29,7 +29,7 @@ SF_USER = os.environ.get("SF_USER", "kdelacruz@camarachina.com")
 SF_PASS = os.environ.get("SF_PASS", "Camara1234")
 SF_SECURITY_TOKEN = os.environ.get("SF_SECURITY_TOKEN", "iCbyXWW5eZn0XUzx3PyZAX3cF")
 
-# Webhook Make
+# Webhook Make (solo para Envio Cliente)
 MAKE_WEBHOOK_URL = "https://hook.us2.make.com/ilh879hn49xq3dxxhbihguy2x9vtcjx1"
 
 sf = None
@@ -48,8 +48,9 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 # Tu archivo local (debe existir junto a main.py)
 CREDENTIALS_FILE = "credentials.json"
 
-# ✅ TU carpeta raíz dentro de Shared Drive
-GDRIVE_PARENT_FOLDER_ID = "0AB-eJ9d6VP-xUk9PVA"
+# ✅ Carpetas raíz dentro de Shared Drive
+GDRIVE_FOLDER_ENVIO_CLIENTE = "0AB-eJ9d6VP-xUk9PVA"
+GDRIVE_FOLDER_RESPALDO = "0AEyoTCLTnmhCUk9PVA"
 
 # Shared Drive support
 USE_SHARED_DRIVE = True
@@ -165,7 +166,7 @@ def mark_done(job_id: str, ok: bool, result: dict | None = None):
             jobs[job_id]["result"] = result or {}
 
 
-def worker_upload(job_id: str, order_number_raw: str, files_payload: list[dict]):
+def worker_upload(job_id: str, order_number_raw: str, files_payload: list[dict], folder_mode: str):
     try:
         if sf is None:
             push_event(job_id, "⚠️ Salesforce no está conectado.", "error")
@@ -173,6 +174,13 @@ def worker_upload(job_id: str, order_number_raw: str, files_payload: list[dict])
             return
 
         service = get_drive_service()
+
+        # Elegir carpeta raíz según el tipo
+        folder_mode = (folder_mode or "envio_cliente").strip().lower()
+        if folder_mode not in ("envio_cliente", "respaldo"):
+            folder_mode = "envio_cliente"
+
+        parent_id = GDRIVE_FOLDER_ENVIO_CLIENTE if folder_mode == "envio_cliente" else GDRIVE_FOLDER_RESPALDO
 
         op_completa = normalizar_op(order_number_raw)
         push_event(job_id, f"🔎 Buscando orden {op_completa} en Salesforce...")
@@ -190,7 +198,7 @@ def worker_upload(job_id: str, order_number_raw: str, files_payload: list[dict])
         push_event(job_id, "📁 Creando / buscando carpeta en Google Drive...")
 
         folder_name = f"{op_completa} - Guias"
-        folder_id, folder_link = ensure_drive_folder(service, folder_name, GDRIVE_PARENT_FOLDER_ID)
+        folder_id, folder_link = ensure_drive_folder(service, folder_name, parent_id)
 
         push_event(job_id, f"📁 Carpeta lista: {folder_name}")
 
@@ -240,19 +248,24 @@ def worker_upload(job_id: str, order_number_raw: str, files_payload: list[dict])
 
         push_event(job_id, "✅ Link guardado en Salesforce.")
 
-        # Webhook Make (no tumba el flujo)
-        push_event(job_id, "📡 Notificando a Make...")
-        webhook_data = {
-            "order_id": record_id,
-            "order_number": op_completa,
-            "drive_folder": folder_link,
-            "uploaded_count": len(uploaded_links),
-            "timestamp": datetime.now().isoformat()
-        }
-        try:
-            requests.post(MAKE_WEBHOOK_URL, json=webhook_data, timeout=10)
-        except Exception:
-            push_event(job_id, "⚠️ Make no respondió, pero ya se subió todo.", "warn")
+        # ===============================
+        # Webhook Make: SOLO para Envio Cliente
+        # ===============================
+        if folder_mode == "envio_cliente":
+            push_event(job_id, "📡 Notificando a Make...")
+            webhook_data = {
+                "order_id": record_id,
+                "order_number": op_completa,
+                "drive_folder": folder_link,
+                "uploaded_count": len(uploaded_links),
+                "timestamp": datetime.now().isoformat()
+            }
+            try:
+                requests.post(MAKE_WEBHOOK_URL, json=webhook_data, timeout=10)
+            except Exception:
+                push_event(job_id, "⚠️ Make no respondió, pero ya se subió todo.", "warn")
+        else:
+            push_event(job_id, "🗂️ Respaldo seleccionado: no se ejecuta Make.", "warn")
 
         push_event(job_id, "🎉 Proceso completado.", "done")
         mark_done(job_id, True, {"folder_link": folder_link, "uploaded_links": uploaded_links})
@@ -289,6 +302,11 @@ def get_order_name(number):
 @app.route("/start_upload", methods=["POST"])
 def start_upload():
     order_number = (request.form.get("order_number") or "").strip()
+
+    folder_mode = (request.form.get("folder_mode") or "envio_cliente").strip().lower()
+    if folder_mode not in ("envio_cliente", "respaldo"):
+        folder_mode = "envio_cliente"
+
     files = request.files.getlist("photos")
 
     if not order_number:
@@ -318,7 +336,7 @@ def start_upload():
     with jobs_lock:
         jobs[job_id] = {"events": [], "done": False, "ok": None, "result": {}}
 
-    t = threading.Thread(target=worker_upload, args=(job_id, order_number, payload), daemon=True)
+    t = threading.Thread(target=worker_upload, args=(job_id, order_number, payload, folder_mode), daemon=True)
     t.start()
 
     return jsonify({"success": True, "job_id": job_id})
