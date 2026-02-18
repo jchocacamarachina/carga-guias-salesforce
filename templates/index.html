@@ -17,6 +17,7 @@
       <!-- Paso 1 -->
       <div>
         <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Paso 1: Buscar Orden</label>
+
         <div class="flex gap-2">
           <div class="flex flex-1 shadow-sm">
             <span class="inline-flex items-center px-3 bg-gray-100 border border-r-0 border-gray-300 rounded-l-lg text-gray-500 font-bold">OP-</span>
@@ -27,34 +28,40 @@
               class="flex-1 border-gray-300 border p-3 rounded-r-lg focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
-          <button type="button" onclick="buscarOrden()"
+          <button type="button" onclick="buscarOrdenPrimera()"
             class="bg-blue-600 text-white px-4 rounded-lg font-bold hover:bg-blue-700 transition-colors">
             Buscar
           </button>
         </div>
+
         <p id="op_name_display" class="mt-3 text-sm font-bold text-gray-700 bg-gray-50 p-2 rounded hidden border border-dashed border-gray-300"></p>
+
+        <!-- Lista de órdenes seleccionadas -->
+        <div class="mt-4">
+          <div class="flex items-center justify-between">
+            <p class="text-xs font-bold text-gray-500 uppercase">Órdenes seleccionadas</p>
+
+            <button id="add_order_btn" type="button"
+              class="text-xs font-black text-blue-600 hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled>
+              + Agregar otra OP
+            </button>
+          </div>
+
+          <div id="orders_list" class="mt-2 space-y-2"></div>
+
+          <p id="client_hint" class="mt-2 text-xs text-gray-500 hidden">
+            Todas las OP deben ser del mismo cliente.
+          </p>
+        </div>
       </div>
 
       <hr class="border-gray-100" />
 
       <!-- Paso 2 + 3 -->
       <form id="upload_form" class="space-y-6 opacity-30 pointer-events-none transition-opacity duration-500">
-        <input type="hidden" name="order_number" id="hidden_order_number" />
-
-        <!-- Tipo (radios) -->
-        <div>
-          <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Tipo</label>
-          <div class="flex gap-6 items-center">
-            <label class="flex items-center gap-2 font-bold text-gray-700">
-              <input type="radio" name="folder_mode" value="envio_cliente" checked class="h-4 w-4">
-              Envio Cliente
-            </label>
-            <label class="flex items-center gap-2 font-bold text-gray-700">
-              <input type="radio" name="folder_mode" value="respaldo" class="h-4 w-4">
-              Respaldo
-            </label>
-          </div>
-        </div>
+        <!-- guardamos las órdenes en JSON -->
+        <input type="hidden" name="order_numbers_json" id="hidden_orders_json" />
 
         <!-- Captura por cámara (cola) -->
         <div>
@@ -76,14 +83,7 @@
             Se abre la cámara y cada foto tomada se agrega a la cola. Luego puedes borrar antes de subir.
           </p>
 
-          <!-- Input oculto que abre cámara -->
-          <input
-            type="file"
-            id="camera_input"
-            accept="image/*"
-            capture="environment"
-            class="hidden"
-          />
+          <input type="file" id="camera_input" accept="image/*" capture="environment" class="hidden" />
         </div>
 
         <!-- Preview -->
@@ -116,7 +116,11 @@
     const input = document.getElementById('order_number_input');
     const display = document.getElementById('op_name_display');
     const form = document.getElementById('upload_form');
-    const hiddenInput = document.getElementById('hidden_order_number');
+
+    const hiddenOrdersJson = document.getElementById('hidden_orders_json');
+    const addOrderBtn = document.getElementById('add_order_btn');
+    const ordersList = document.getElementById('orders_list');
+    const clientHint = document.getElementById('client_hint');
 
     const cameraInput = document.getElementById('camera_input');
     const takePhotoBtn = document.getElementById('take_photo_btn');
@@ -132,12 +136,16 @@
     let selectedFiles = [];
     let sse = null;
 
+    // Estado de órdenes seleccionadas
+    let selectedOrders = []; // [{raw, op, name, client_name}]
+    let clientNameRef = null;
+
     function bloquearForm() {
       form.classList.add('opacity-30', 'pointer-events-none');
       submitBtn.disabled = true;
-      hiddenInput.value = "";
       selectedFiles = [];
       renderPreview();
+      resetCompactLog();
     }
 
     function habilitarForm() {
@@ -145,25 +153,159 @@
       updateSubmitState();
     }
 
-    function log(msg, kind="info") {
-      const el = document.createElement("div");
-      el.className = "leading-snug";
-      if (kind === "error") el.classList.add("text-red-700", "font-bold");
-      if (kind === "warn") el.classList.add("text-amber-700", "font-bold");
-      if (kind === "done") el.classList.add("text-green-700", "font-bold");
-      el.textContent = msg;
-      statusLog.appendChild(el);
-      statusLog.scrollTop = statusLog.scrollHeight;
+    // ====== LOGGER COMPACTO (máx 4 líneas) ======
+    const steps = {
+      start:   { order: 1 },
+      upload:  { order: 2 },
+      sf:      { order: 3 },
+      done:    { order: 4 }
+    };
+
+    const stepState = { start: null, upload: null, sf: null, done: null };
+
+    function resetCompactLog() {
+      stepState.start = null;
+      stepState.upload = null;
+      stepState.sf = null;
+      stepState.done = null;
+      renderCompactLog();
     }
 
-    clearLogBtn.addEventListener("click", () => statusLog.innerHTML = "");
+    function setStep(key, text, kind="info") {
+      if (!steps[key]) return;
+      stepState[key] = { text, kind };
+      renderCompactLog();
+    }
 
-    input.addEventListener('input', () => {
-      display.classList.add('hidden');
-      bloquearForm();
-    });
+    function renderCompactLog() {
+      statusLog.innerHTML = "";
+      const orderedKeys = Object.keys(steps).sort((a,b) => steps[a].order - steps[b].order);
 
-    function buscarOrden() {
+      orderedKeys.forEach(k => {
+        const item = stepState[k];
+        if (!item) return;
+
+        const el = document.createElement("div");
+        el.className = "leading-snug";
+        if (item.kind === "error") el.classList.add("text-red-700", "font-bold");
+        if (item.kind === "warn")  el.classList.add("text-amber-700", "font-bold");
+        if (item.kind === "done")  el.classList.add("text-green-700", "font-bold");
+        el.textContent = item.text;
+        statusLog.appendChild(el);
+      });
+    }
+
+    function handleBackendMsg(msg, kind="info") {
+      const raw = (msg || "").trim();
+      const m = raw.toLowerCase();
+
+      if (m.includes("verificando") && m.includes("salesforce")) {
+        setStep("start", "🔎 Verificando órdenes...");
+        return;
+      }
+      if (m.includes("órdenes verificadas")) {
+        // ej: "✅ Órdenes verificadas (3)."
+        setStep("start", raw, "done");
+        return;
+      }
+      if (m.includes("orden no encontrada") || m.includes("no pertenecen al mismo cliente") || m.includes("enlace_de_fotos__c")) {
+        setStep("done", "❌ Revisa las órdenes (cliente/links).", "error");
+        return;
+      }
+
+      if (m.includes("subiendo")) {
+        const match = raw.match(/subiendo\s+(\d+)\/(\d+)/i);
+        if (match) setStep("upload", `⬆️ Subiendo fotos (${match[1]}/${match[2]})...`);
+        else setStep("upload", "⬆️ Subiendo fotos...");
+        return;
+      }
+
+      if (m.includes("guardando link de carpeta en salesforce")) {
+        setStep("sf", "🧾 Guardando en Salesforce...");
+        return;
+      }
+      if (m.includes("guardado en salesforce")) {
+        // ej: "✅ Guardado en Salesforce (3)."
+        setStep("sf", raw, "done");
+        return;
+      }
+
+      // warnings técnicos no se muestran
+      if (m.includes("make no respondió") || m.includes("no se pudo hacer público")) return;
+
+      if (kind === "error" || m.startsWith("⚠️ error") || m.startsWith("error")) {
+        setStep("done", "❌ Ocurrió un error.", "error");
+        return;
+      }
+    }
+
+    clearLogBtn.addEventListener("click", () => resetCompactLog());
+
+    // ====== Órdenes UI ======
+    function renderOrders() {
+      ordersList.innerHTML = "";
+
+      if (!selectedOrders.length) {
+        ordersList.innerHTML = `<div class="text-sm text-gray-500 bg-gray-50 border border-dashed rounded-lg p-3">
+          Aún no has seleccionado una orden.
+        </div>`;
+        addOrderBtn.disabled = true;
+        clientHint.classList.add("hidden");
+      } else {
+        addOrderBtn.disabled = false;
+        clientHint.classList.remove("hidden");
+
+        selectedOrders.forEach((o, idx) => {
+          const card = document.createElement("div");
+          card.className = "flex items-center justify-between bg-gray-50 border rounded-lg p-3";
+
+          const left = document.createElement("div");
+          left.className = "min-w-0";
+          left.innerHTML = `
+            <div class="text-sm font-black text-gray-800 truncate">${o.op}</div>
+            <div class="text-xs text-gray-500 font-bold truncate">${o.name || ""}</div>
+          `;
+
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ml-3 text-xs font-black text-red-600 hover:underline";
+          btn.textContent = "Quitar";
+          btn.onclick = () => {
+            selectedOrders.splice(idx, 1);
+            // recalcular client ref
+            if (!selectedOrders.length) {
+              clientNameRef = null;
+              hiddenOrdersJson.value = "";
+              bloquearForm();
+            } else {
+              clientNameRef = selectedOrders[0].client_name;
+              syncHiddenOrders();
+              habilitarForm();
+            }
+            renderOrders();
+            updateSubmitState();
+          };
+
+          card.appendChild(left);
+          card.appendChild(btn);
+          ordersList.appendChild(card);
+        });
+      }
+
+      syncHiddenOrders();
+    }
+
+    function syncHiddenOrders() {
+      const raws = selectedOrders.map(o => o.raw);
+      hiddenOrdersJson.value = JSON.stringify(raws);
+    }
+
+    async function fetchOrderInfo(rawNumber) {
+      const res = await fetch(`/get_order_info/${encodeURIComponent(rawNumber)}`);
+      return await res.json();
+    }
+
+    async function buscarOrdenPrimera() {
       const num = input.value.trim();
       if (!num) return alert("Ingresa un número");
 
@@ -173,33 +315,92 @@
 
       bloquearForm();
 
-      fetch(`/get_order_name/${encodeURIComponent(num)}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.success) {
-            display.innerText = "✅ Orden: " + data.name;
-            display.style.color = "#059669";
-            hiddenInput.value = num;
-            habilitarForm();
-          } else {
-            display.innerText = "❌ Orden no encontrada";
-            display.style.color = "#dc2626";
-            bloquearForm();
-          }
-        })
-        .catch(() => {
-          display.innerText = "⚠️ Error consultando la orden";
+      try {
+        const data = await fetchOrderInfo(num);
+
+        if (!data.success) {
+          display.innerText = "❌ Orden no encontrada";
           display.style.color = "#dc2626";
-          bloquearForm();
-        });
+          selectedOrders = [];
+          clientNameRef = null;
+          renderOrders();
+          return;
+        }
+
+        // set primera orden
+        selectedOrders = [{
+          raw: num,
+          op: data.op,
+          name: data.name,
+          client_name: data.client_name
+        }];
+        clientNameRef = data.client_name;
+
+        display.innerText = "✅ Orden: " + (data.name || data.op);
+        display.style.color = "#059669";
+
+        renderOrders();
+        habilitarForm();
+        resetCompactLog();
+      } catch (e) {
+        display.innerText = "⚠️ Error consultando la orden";
+        display.style.color = "#dc2626";
+        selectedOrders = [];
+        clientNameRef = null;
+        renderOrders();
+      }
     }
 
+    addOrderBtn.addEventListener("click", async () => {
+      const num = prompt("Ingresa otra OP (solo números, sin OP-):");
+      if (!num) return;
+
+      // evita duplicados por raw exacto
+      if (selectedOrders.some(o => (o.raw || "").trim() === num.trim())) {
+        alert("Esa OP ya está agregada.");
+        return;
+      }
+
+      try {
+        const data = await fetchOrderInfo(num);
+
+        if (!data.success) {
+          alert("Orden no encontrada.");
+          return;
+        }
+
+        if (!data.client_name) {
+          alert("Esa orden no tiene Nombre_del_cliente__c.");
+          return;
+        }
+
+        if (clientNameRef && data.client_name !== clientNameRef) {
+          alert("Esa orden NO es del mismo cliente. No se puede agregar.");
+          return;
+        }
+
+        selectedOrders.push({
+          raw: num,
+          op: data.op,
+          name: data.name,
+          client_name: data.client_name
+        });
+
+        clientNameRef = selectedOrders[0].client_name;
+        renderOrders();
+        updateSubmitState();
+      } catch (e) {
+        alert("Error consultando la orden.");
+      }
+    });
+
+    // ====== Fotos / submit ======
     function updateSubmitState() {
-      const okOrder = hiddenInput.value.trim().length > 0;
+      const okOrders = selectedOrders.length > 0;
       const okFiles = selectedFiles.length > 0;
-      submitBtn.disabled = !(okOrder && okFiles);
-      clearPhotosBtn.disabled = !(okOrder && okFiles);
-      takePhotoBtn.disabled = !okOrder;
+      submitBtn.disabled = !(okOrders && okFiles);
+      clearPhotosBtn.disabled = !(okOrders && okFiles);
+      takePhotoBtn.disabled = !okOrders;
     }
 
     function renderPreview() {
@@ -246,15 +447,12 @@
       updateSubmitState();
     }
 
-    // Abrir cámara al apretar el botón
     takePhotoBtn.addEventListener("click", () => {
-      if (!hiddenInput.value.trim()) return;
-      // reset para permitir tomar la misma foto de nuevo si el SO recicla nombre
+      if (!selectedOrders.length) return;
       cameraInput.value = "";
       cameraInput.click();
     });
 
-    // Al tomar foto, se agrega a la cola
     cameraInput.addEventListener("change", async () => {
       const file = (cameraInput.files && cameraInput.files[0]) ? cameraInput.files[0] : null;
       if (!file) return;
@@ -264,7 +462,6 @@
         return;
       }
 
-      // Renombrar para evitar nombres repetidos en iPhone (IMG_0001 etc.)
       const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const newName = `foto_${stamp}.${ext}`;
@@ -278,22 +475,18 @@
     clearPhotosBtn.addEventListener("click", () => {
       selectedFiles = [];
       renderPreview();
+      resetCompactLog();
     });
 
     submitBtn.addEventListener("click", async () => {
       if (submitBtn.disabled) return;
-
       if (sse) { sse.close(); sse = null; }
 
-      statusLog.innerHTML = "";
-      log("⏳ Iniciando proceso...");
+      resetCompactLog();
+      setStep("start", "⏳ Iniciando...");
 
       const fd = new FormData();
-      fd.append("order_number", hiddenInput.value.trim());
-
-      const mode = document.querySelector('input[name="folder_mode"]:checked')?.value || "envio_cliente";
-      fd.append("folder_mode", mode);
-
+      fd.append("order_numbers_json", hiddenOrdersJson.value || "[]");
       selectedFiles.forEach(f => fd.append("photos", f, f.name));
 
       submitBtn.disabled = true;
@@ -304,37 +497,35 @@
         const data = await res.json();
 
         if (!data.success) {
-          log("❌ " + (data.error || "Error iniciando upload"), "error");
+          setStep("done", "❌ No se pudo iniciar la subida.", "error");
           submitBtn.textContent = "SUBIR FOTOS";
           updateSubmitState();
           return;
         }
 
         const jobId = data.job_id;
-        log("📌 Job: " + jobId);
-
         sse = new EventSource(`/progress/${jobId}`);
 
-        sse.addEventListener("message", (e) => log(e.data));
-        sse.addEventListener("warn", (e) => log(e.data, "warn"));
-        sse.addEventListener("error", (e) => log(e.data, "error"));
-        sse.addEventListener("done", (e) => log(e.data, "done"));
+        sse.addEventListener("message", (e) => handleBackendMsg(e.data, "info"));
+        sse.addEventListener("warn", (e) => handleBackendMsg(e.data, "warn"));
+        sse.addEventListener("error", (e) => handleBackendMsg(e.data, "error"));
+        sse.addEventListener("done", (e) => handleBackendMsg(e.data, "done"));
 
         sse.addEventListener("final", (e) => {
           try {
             const payload = JSON.parse(e.data);
             if (payload.ok) {
-              log("✅ Todo OK.", "done");
-              if (payload.result && payload.result.folder_link) {
-                log("📁 Carpeta Drive: " + payload.result.folder_link, "done");
-              }
+              const link = payload.result && payload.result.folder_link ? payload.result.folder_link : null;
+              if (link) setStep("done", "✅ Mensaje enviado exitosamente.", "done");
+              else setStep("done", "✅ Mensaje enviado exitosamente.", "done");
+
               selectedFiles = [];
               renderPreview();
             } else {
-              log("❌ Terminó con error.", "error");
+              setStep("done", "❌ Terminó con error.", "error");
             }
           } catch {
-            log("⚠️ Final recibido, pero no se pudo parsear.", "warn");
+            setStep("done", "⚠️ Final recibido, pero no se pudo leer.", "warn");
           }
 
           if (sse) { sse.close(); sse = null; }
@@ -343,13 +534,18 @@
         });
 
       } catch (err) {
-        log("⚠️ Error de red: " + err.message, "error");
+        setStep("done", "❌ Error de red.", "error");
         submitBtn.textContent = "SUBIR FOTOS";
         updateSubmitState();
       }
     });
 
-    bloquearForm();
+    // Init
+    function init() {
+      bloquearForm();
+      renderOrders();
+    }
+    init();
   </script>
 </body>
 </html>

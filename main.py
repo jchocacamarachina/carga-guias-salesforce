@@ -3,6 +3,7 @@ import json
 import uuid
 import time
 import threading
+import re
 from datetime import datetime
 from io import BytesIO
 
@@ -23,13 +24,12 @@ app.secret_key = "clave-camara-china"
 
 
 # ===============================
-# Salesforce (como tu versión original)
+# Salesforce
 # ===============================
 SF_USER = os.environ.get("SF_USER", "kdelacruz@camarachina.com")
 SF_PASS = os.environ.get("SF_PASS", "Camara1234")
 SF_SECURITY_TOKEN = os.environ.get("SF_SECURITY_TOKEN", "iCbyXWW5eZn0XUzx3PyZAX3cF")
 
-# Webhook Make (solo para Envio Cliente)
 MAKE_WEBHOOK_URL = "https://hook.us2.make.com/ilh879hn49xq3dxxhbihguy2x9vtcjx1"
 
 sf = None
@@ -44,17 +44,8 @@ except Exception as e:
 # Google Drive (Service Account)
 # ===============================
 SCOPES = ["https://www.googleapis.com/auth/drive"]
-
-# Tu archivo local (debe existir junto a main.py)
 CREDENTIALS_FILE = "credentials.json"
-
-# ✅ Carpetas raíz dentro de Shared Drive
-GDRIVE_FOLDER_ENVIO_CLIENTE = "0AB-eJ9d6VP-xUk9PVA"
-GDRIVE_FOLDER_RESPALDO = "0AEyoTCLTnmhCUk9PVA"
-
-# Shared Drive support
 USE_SHARED_DRIVE = True
-
 _drive_service = None
 
 
@@ -75,19 +66,29 @@ def get_drive_service():
 # Helpers
 # ===============================
 def normalizar_op(numero: str) -> str:
-    """
-    Convierte input '11139' o '0011139' en el formato exacto que usa tu SF:
-    OP-00 + numero (sin espacios). Ej: OP-0011139
-    """
     numero = (numero or "").strip()
     return f"OP-00{numero}"
 
 
+def extract_drive_folder_id(url_or_id: str) -> str | None:
+    s = (url_or_id or "").strip()
+    if not s:
+        return None
+
+    # ID directo
+    if "http" not in s.lower() and "drive.google.com" not in s.lower():
+        if len(s) >= 10 and re.fullmatch(r"[A-Za-z0-9_-]+", s):
+            return s
+        return None
+
+    m = re.search(r"/folders/([A-Za-z0-9_-]+)", s)
+    if m:
+        return m.group(1)
+
+    return None
+
+
 def ensure_drive_folder(service, folder_name: str, parent_id: str):
-    """
-    Busca carpeta por nombre dentro del parent_id; si no existe la crea.
-    Devuelve (folder_id, folder_link)
-    """
     safe_name = folder_name.replace("'", "\\'")
     q = (
         "mimeType='application/vnd.google-apps.folder' and "
@@ -134,15 +135,30 @@ def ensure_drive_folder(service, folder_name: str, parent_id: str):
 
 
 def make_public_read(service, file_id: str):
-    """
-    Intenta poner permiso público (anyone reader).
-    Si tu dominio bloquea "anyone", fallará, pero igual queda subido.
-    """
     perm_body = {"type": "anyone", "role": "reader"}
     perm_kwargs = {"fileId": file_id, "body": perm_body}
     if USE_SHARED_DRIVE:
         perm_kwargs["supportsAllDrives"] = True
     service.permissions().create(**perm_kwargs).execute()
+
+
+def sf_get_order_info(op_completa: str) -> dict | None:
+    """
+    Devuelve info mínima de la OP:
+    - Id
+    - Name
+    - Nombre_del_cliente__c
+    - Enlace_de_Fotos__c
+    """
+    query = (
+        "SELECT Id, Name, Nombre_del_cliente__c, Enlace_de_Fotos__c "
+        "FROM Orden_Proveedor__c "
+        f"WHERE Orden_Proveedor_Nro__c = '{op_completa}'"
+    )
+    result = sf.query_all(query)
+    if result.get("totalSize", 0) == 0:
+        return None
+    return result["records"][0]
 
 
 # ===============================
@@ -166,7 +182,7 @@ def mark_done(job_id: str, ok: bool, result: dict | None = None):
             jobs[job_id]["result"] = result or {}
 
 
-def worker_upload(job_id: str, order_number_raw: str, files_payload: list[dict], folder_mode: str):
+def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list[dict]):
     try:
         if sf is None:
             push_event(job_id, "⚠️ Salesforce no está conectado.", "error")
@@ -175,100 +191,149 @@ def worker_upload(job_id: str, order_number_raw: str, files_payload: list[dict],
 
         service = get_drive_service()
 
-        # Elegir carpeta raíz según el tipo
-        folder_mode = (folder_mode or "envio_cliente").strip().lower()
-        if folder_mode not in ("envio_cliente", "respaldo"):
-            folder_mode = "envio_cliente"
+        # Normalizar y deduplicar manteniendo orden
+        seen = set()
+        ops = []
+        for raw in order_numbers_raw:
+            op = normalizar_op(raw)
+            if op not in seen:
+                seen.add(op)
+                ops.append(op)
 
-        parent_id = GDRIVE_FOLDER_ENVIO_CLIENTE if folder_mode == "envio_cliente" else GDRIVE_FOLDER_RESPALDO
-
-        op_completa = normalizar_op(order_number_raw)
-        push_event(job_id, f"🔎 Buscando orden {op_completa} en Salesforce...")
-
-        query = f"SELECT Id FROM Orden_Proveedor__c WHERE Orden_Proveedor_Nro__c = '{op_completa}'"
-        result = sf.query_all(query)
-
-        if result.get("totalSize", 0) == 0:
-            push_event(job_id, "❌ Orden no encontrada en Salesforce.", "error")
+        if not ops:
+            push_event(job_id, "❌ No se recibieron órdenes válidas.", "error")
             mark_done(job_id, False)
             return
 
-        record_id = result["records"][0]["Id"]
-        push_event(job_id, "✅ Orden encontrada.")
-        push_event(job_id, "📁 Creando / buscando carpeta en Google Drive...")
+        push_event(job_id, f"🔎 Verificando {len(ops)} orden(es) en Salesforce...")
 
-        folder_name = f"{op_completa} - Guias"
-        folder_id, folder_link = ensure_drive_folder(service, folder_name, parent_id)
+        # 1) Cargar info de todas las OP y validar cliente igual
+        orders_info = []
+        client_name_ref = None
 
-        push_event(job_id, f"📁 Carpeta lista: {folder_name}")
+        for op in ops:
+            info = sf_get_order_info(op)
+            if not info:
+                push_event(job_id, f"❌ Orden no encontrada: {op}", "error")
+                mark_done(job_id, False)
+                return
 
-        total = len(files_payload)
-        uploaded_links = []
+            client_name = (info.get("Nombre_del_cliente__c") or "").strip()
+            if not client_name:
+                push_event(job_id, f"❌ La orden {op} no tiene Nombre_del_cliente__c.", "error")
+                mark_done(job_id, False)
+                return
 
+            if client_name_ref is None:
+                client_name_ref = client_name
+            elif client_name != client_name_ref:
+                push_event(job_id, "❌ Las órdenes no pertenecen al mismo cliente.", "error")
+                mark_done(job_id, False)
+                return
+
+            base_url = info.get("Enlace_de_Fotos__c")
+            base_id = extract_drive_folder_id(base_url)
+            if not base_id:
+                push_event(job_id, f"❌ {op} no tiene Enlace_de_Fotos__c válido (URL/ID de carpeta).", "error")
+                mark_done(job_id, False)
+                return
+
+            orders_info.append({
+                "op": op,
+                "record_id": info["Id"],
+                "name": info.get("Name"),
+                "client_name": client_name,
+                "base_folder_id": base_id
+            })
+
+        push_event(job_id, f"✅ Órdenes verificadas ({len(orders_info)}).")
+
+        # 2) Por cada OP: crear ENTREGA y subir fotos
+        total_photos = len(files_payload)
+        results_per_order = []
+
+        # Guardamos un contador global para el UI (solo fotos), pero internamente subimos a todas
+        # UI verá "Subiendo (i/total)" por cada foto (una vez), aunque bajo el capó se sube a N órdenes.
         for i, f in enumerate(files_payload, start=1):
-            push_event(job_id, f"⬆️ Subiendo {i}/{total}: {f['filename']} ...")
+            push_event(job_id, f"⬆️ Subiendo {i}/{total_photos}: {f['filename']} ...")
 
-            bio = BytesIO(f["bytes"])
-            media = MediaIoBaseUpload(bio, mimetype=f["mimetype"], resumable=False)
+            for order in orders_info:
+                entrega_folder_id, entrega_folder_link = ensure_drive_folder(service, "ENTREGA", order["base_folder_id"])
 
-            metadata = {
-                "name": f"{op_completa}_{i:02d}_{f['filename']}",
-                "parents": [folder_id]
-            }
+                bio = BytesIO(f["bytes"])
+                media = MediaIoBaseUpload(bio, mimetype=f["mimetype"], resumable=False)
 
-            create_file_kwargs = {
-                "body": metadata,
-                "media_body": media,
-                "fields": "id, webViewLink",
-            }
-            if USE_SHARED_DRIVE:
-                create_file_kwargs["supportsAllDrives"] = True
+                metadata = {
+                    "name": f"{order['op']}_{i:02d}_{f['filename']}",
+                    "parents": [entrega_folder_id]
+                }
 
-            created = service.files().create(**create_file_kwargs).execute()
-            file_id = created["id"]
+                create_file_kwargs = {
+                    "body": metadata,
+                    "media_body": media,
+                    "fields": "id, webViewLink",
+                }
+                if USE_SHARED_DRIVE:
+                    create_file_kwargs["supportsAllDrives"] = True
 
-            try:
-                make_public_read(service, file_id)
-            except Exception:
-                push_event(job_id, "⚠️ No se pudo hacer público el archivo (Drive policy).", "warn")
+                created = service.files().create(**create_file_kwargs).execute()
+                file_id = created["id"]
 
-            link = created.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view"
-            uploaded_links.append(link)
+                try:
+                    make_public_read(service, file_id)
+                except Exception:
+                    # warning técnico, UI lo ignora
+                    push_event(job_id, "⚠️ No se pudo hacer público el archivo (Drive policy).", "warn")
 
-            push_event(job_id, f"✅ Subida OK: {f['filename']}")
+                # Guardamos link de archivo si algún día lo necesitas
+                _ = created.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view"
 
-        # ===============================
-        # Guardar en Salesforce (MISMO CAMPO QUE TENÍAS)
-        # ===============================
+                # guardamos ENTREGA link por orden (para update y para Make)
+                order.setdefault("entrega_folder_link", entrega_folder_link)
+
+        # 3) Actualizar Salesforce en todas las OP
         push_event(job_id, "🧾 Guardando link de carpeta en Salesforce...")
 
-        sf.Orden_Proveedor__c.update(record_id, {
-            "Guia_de_Entrega_URL__c": folder_link
-        })
+        for order in orders_info:
+            sf.Orden_Proveedor__c.update(order["record_id"], {
+                "Guia_de_Entrega_URL__c": order["entrega_folder_link"]
+            })
+            results_per_order.append({
+                "order_id": order["record_id"],
+                "order_number": order["op"],
+                "drive_folder": order["entrega_folder_link"]
+            })
 
-        push_event(job_id, "✅ Link guardado en Salesforce.")
+        push_event(job_id, f"✅ Guardado en Salesforce ({len(orders_info)}).")
 
-        # ===============================
-        # Webhook Make: SOLO para Envio Cliente
-        # ===============================
-        if folder_mode == "envio_cliente":
-            push_event(job_id, "📡 Notificando a Make...")
-            webhook_data = {
-                "order_id": record_id,
-                "order_number": op_completa,
-                "drive_folder": folder_link,
-                "uploaded_count": len(uploaded_links),
-                "timestamp": datetime.now().isoformat()
-            }
-            try:
-                requests.post(MAKE_WEBHOOK_URL, json=webhook_data, timeout=10)
-            except Exception:
-                push_event(job_id, "⚠️ Make no respondió, pero ya se subió todo.", "warn")
-        else:
-            push_event(job_id, "🗂️ Respaldo seleccionado: no se ejecuta Make.", "warn")
+        # 4) Webhook Make: SOLO UNA VEZ
+        push_event(job_id, "📡 Notificando a Make...")
+
+        legacy_first = results_per_order[0]
+        webhook_data = {
+            # Legacy (para no romper tu Make actual)
+            "order_id": legacy_first["order_id"],
+            "order_number": legacy_first["order_number"],
+            "drive_folder": legacy_first["drive_folder"],
+            "uploaded_count": total_photos,
+            "timestamp": datetime.now().isoformat(),
+
+            # Nuevo (multi-OP)
+            "client_name": client_name_ref,
+            "orders": results_per_order
+        }
+
+        try:
+            requests.post(MAKE_WEBHOOK_URL, json=webhook_data, timeout=10)
+        except Exception:
+            push_event(job_id, "⚠️ Make no respondió, pero ya se subió todo.", "warn")
 
         push_event(job_id, "🎉 Proceso completado.", "done")
-        mark_done(job_id, True, {"folder_link": folder_link, "uploaded_links": uploaded_links})
+        mark_done(job_id, True, {
+            "client_name": client_name_ref,
+            "orders": results_per_order,
+            "folder_link": legacy_first["drive_folder"]
+        })
 
     except Exception as e:
         push_event(job_id, f"⚠️ Error: {str(e)}", "error")
@@ -283,36 +348,66 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/get_order_name/<number>", methods=["GET"])
-def get_order_name(number):
+@app.route("/get_order_info/<number>", methods=["GET"])
+def get_order_info(number):
+    """
+    Devuelve info para validar en frontend:
+    - Name
+    - op (normalizada)
+    - client_name (Nombre_del_cliente__c)
+    """
     if sf is None:
         return jsonify({"success": False, "error": "Salesforce no conectado"})
 
-    op_completa = normalizar_op(number)
+    op = normalizar_op(number)
     try:
-        query = f"SELECT Name FROM Orden_Proveedor__c WHERE Orden_Proveedor_Nro__c = '{op_completa}'"
-        result = sf.query_all(query)
-        if result.get("totalSize", 0) > 0:
-            return jsonify({"success": True, "name": result["records"][0]["Name"], "op": op_completa})
-        return jsonify({"success": False})
+        info = sf_get_order_info(op)
+        if not info:
+            return jsonify({"success": False})
+
+        return jsonify({
+            "success": True,
+            "name": info.get("Name"),
+            "op": op,
+            "client_name": (info.get("Nombre_del_cliente__c") or "").strip()
+        })
     except Exception:
         return jsonify({"success": False})
 
 
 @app.route("/start_upload", methods=["POST"])
 def start_upload():
-    order_number = (request.form.get("order_number") or "").strip()
+    """
+    Recibe:
+    - order_numbers_json: JSON array de strings (ej ["000123", "000124"])
+      (fallback: order_number si viene una sola)
+    - photos: imágenes
+    """
+    if sf is None:
+        return jsonify({"success": False, "error": "Salesforce no conectado"}), 500
 
-    folder_mode = (request.form.get("folder_mode") or "envio_cliente").strip().lower()
-    if folder_mode not in ("envio_cliente", "respaldo"):
-        folder_mode = "envio_cliente"
+    order_numbers_json = (request.form.get("order_numbers_json") or "").strip()
+    order_number_single = (request.form.get("order_number") or "").strip()
 
     files = request.files.getlist("photos")
 
-    if not order_number:
-        return jsonify({"success": False, "error": "Falta order_number"}), 400
     if not files:
         return jsonify({"success": False, "error": "Debes seleccionar al menos 1 foto"}), 400
+
+    order_numbers = []
+    if order_numbers_json:
+        try:
+            order_numbers = json.loads(order_numbers_json)
+            if not isinstance(order_numbers, list):
+                order_numbers = []
+        except Exception:
+            order_numbers = []
+
+    if not order_numbers and order_number_single:
+        order_numbers = [order_number_single]
+
+    if not order_numbers:
+        return jsonify({"success": False, "error": "Faltan órdenes proveedor"}), 400
 
     payload = []
     for f in files:
@@ -336,7 +431,7 @@ def start_upload():
     with jobs_lock:
         jobs[job_id] = {"events": [], "done": False, "ok": None, "result": {}}
 
-    t = threading.Thread(target=worker_upload, args=(job_id, order_number, payload, folder_mode), daemon=True)
+    t = threading.Thread(target=worker_upload, args=(job_id, order_numbers, payload), daemon=True)
     t.start()
 
     return jsonify({"success": True, "job_id": job_id})
