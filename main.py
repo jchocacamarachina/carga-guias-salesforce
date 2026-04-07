@@ -29,9 +29,8 @@ app.secret_key = "clave-camara-china"
 # ===============================
 # Sistema de Logs Interno
 # ===============================
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "sistemas2024")  # Cambia esto o ponlo en variable de entorno
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "sistemas2024")
 
-# Guardamos los últimos 500 logs en memoria (circular)
 _log_buffer: deque = deque(maxlen=500)
 _log_lock = threading.Lock()
 
@@ -45,7 +44,6 @@ LOG_LEVELS = {
 
 
 def syslog(level: str, message: str, context: dict = None):
-    """Registra un evento interno en el buffer de logs."""
     entry = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "level": level.upper(),
@@ -55,13 +53,10 @@ def syslog(level: str, message: str, context: dict = None):
     }
     with _log_lock:
         _log_buffer.append(entry)
-
-    # También imprime en consola del servidor (visible en Render logs)
     print(f"[{entry['ts']}] [{entry['level']}] {message}" + (f" | {context}" if context else ""))
 
 
 def require_admin(f):
-    """Decorator: protege rutas con token en query param ?token=..."""
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.args.get("token", "")
@@ -72,7 +67,7 @@ def require_admin(f):
 
 
 # ===============================
-# Salesforce
+# Salesforce — con reconexión automática
 # ===============================
 SF_USER = os.environ.get("SF_USER", "kdelacruz@camarachina.com")
 SF_PASS = os.environ.get("SF_PASS", "Camara1234")
@@ -80,13 +75,39 @@ SF_SECURITY_TOKEN = os.environ.get("SF_SECURITY_TOKEN", "iCbyXWW5eZn0XUzx3PyZAX3
 
 MAKE_WEBHOOK_URL = "https://hook.us2.make.com/ilh879hn49xq3dxxhbihguy2x9vtcjx1"
 
-sf = None
+_sf = None
+_sf_lock = threading.Lock()
+
+
+def get_sf():
+    """Devuelve una instancia de Salesforce activa, reconectando si la sesión expiró."""
+    global _sf
+    with _sf_lock:
+        # Si ya hay sesión, prueba un query liviano para verificar que sigue viva
+        if _sf is not None:
+            try:
+                _sf.query("SELECT Id FROM Organization LIMIT 1")
+                return _sf
+            except Exception as e:
+                syslog("WARNING", f"Sesión Salesforce muerta, reconectando... ({e})")
+                _sf = None
+
+        # Reconectar
+        try:
+            _sf = Salesforce(username=SF_USER, password=SF_PASS, security_token=SF_SECURITY_TOKEN)
+            syslog("INFO", "Salesforce reconectado correctamente", {"user": SF_USER})
+            return _sf
+        except Exception as e:
+            syslog("CRITICAL", f"Error reconectando a Salesforce: {e}", {"user": SF_USER})
+            _sf = None
+            return None
+
+
+# Intento de conexión inicial al arrancar (no fatal si falla)
 try:
-    sf = Salesforce(username=SF_USER, password=SF_PASS, security_token=SF_SECURITY_TOKEN)
-    syslog("INFO", "Salesforce conectado correctamente", {"user": SF_USER})
-except Exception as e:
-    syslog("CRITICAL", f"Error conectando a Salesforce: {e}", {"user": SF_USER})
-    sf = None
+    get_sf()
+except Exception:
+    pass
 
 
 # ===============================
@@ -196,12 +217,15 @@ def make_public_read(service, file_id: str):
 
 
 def sf_get_order_info(op_completa: str) -> dict | None:
+    client = get_sf()
+    if not client:
+        return None
     query = (
         "SELECT Id, Name, Nombre_del_cliente__c, Enlace_de_Fotos__c "
         "FROM Orden_Proveedor__c "
         f"WHERE Orden_Proveedor_Nro__c = '{op_completa}'"
     )
-    result = sf.query_all(query)
+    result = client.query_all(query)
     if result.get("totalSize", 0) == 0:
         return None
     return result["records"][0]
@@ -235,7 +259,8 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
     })
 
     try:
-        if sf is None:
+        sf_client = get_sf()
+        if sf_client is None:
             msg = "Salesforce no está conectado"
             push_event(job_id, f"⚠️ {msg}", "error")
             syslog("ERROR", f"[job:{job_id}] {msg}")
@@ -375,7 +400,10 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
 
         for order in orders_info:
             try:
-                sf.Orden_Proveedor__c.update(order["record_id"], {
+                sf_active = get_sf()
+                if not sf_active:
+                    raise Exception("Salesforce no disponible al actualizar registro")
+                sf_active.Orden_Proveedor__c.update(order["record_id"], {
                     "Guia_de_Entrega_URL__c": order["entrega_folder_link"]
                 })
                 results_per_order.append({
@@ -445,7 +473,8 @@ def index():
 
 @app.route("/get_order_info/<number>", methods=["GET"])
 def get_order_info(number):
-    if sf is None:
+    sf_client = get_sf()
+    if sf_client is None:
         syslog("ERROR", "get_order_info llamado pero Salesforce no conectado")
         return jsonify({"success": False, "error": "Salesforce no conectado"})
 
@@ -469,7 +498,8 @@ def get_order_info(number):
 
 @app.route("/start_upload", methods=["POST"])
 def start_upload():
-    if sf is None:
+    sf_client = get_sf()
+    if sf_client is None:
         syslog("ERROR", "start_upload llamado pero Salesforce no conectado")
         return jsonify({"success": False, "error": "Salesforce no conectado"}), 500
 
@@ -573,7 +603,6 @@ def progress(job_id):
 @app.route("/admin/logs")
 @require_admin
 def admin_logs():
-    """Panel HTML de logs. Acceso: /admin/logs?token=TU_TOKEN"""
     html = """<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -683,7 +712,6 @@ def admin_logs():
       .then(data => { allLogs = data; renderLogs(); });
   }
 
-  // SSE para logs en tiempo real
   function connectSSE() {
     const es = new EventSource('/admin/logs/stream?token=' + token);
     es.onopen = () => { statusEl.textContent = '● En vivo'; statusEl.className = 'live'; };
@@ -709,7 +737,6 @@ def admin_logs():
 @app.route("/admin/logs/json")
 @require_admin
 def admin_logs_json():
-    """Devuelve todos los logs en JSON."""
     with _log_lock:
         data = list(_log_buffer)
     return jsonify(data)
@@ -718,7 +745,6 @@ def admin_logs_json():
 @app.route("/admin/logs/stream")
 @require_admin
 def admin_logs_stream():
-    """SSE: empuja logs nuevos en tiempo real al panel admin."""
     def stream():
         last_len = 0
         while True:
@@ -738,7 +764,6 @@ def admin_logs_stream():
 @app.route("/admin/status")
 @require_admin
 def admin_status():
-    """Health check rápido en JSON."""
     with _log_lock:
         total_logs = len(_log_buffer)
         errors = sum(1 for l in _log_buffer if l["level"] in ("ERROR", "CRITICAL"))
@@ -749,7 +774,7 @@ def admin_status():
 
     return jsonify({
         "timestamp": datetime.now().isoformat(),
-        "salesforce_connected": sf is not None,
+        "salesforce_connected": get_sf() is not None,
         "drive_connected": _drive_service is not None,
         "logs_in_buffer": total_logs,
         "errors_in_buffer": errors,
