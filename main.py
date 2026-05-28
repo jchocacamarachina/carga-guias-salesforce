@@ -146,7 +146,7 @@ def sf_link_file_to_record(sf_client, content_doc_id: str, record_id: str):
         "ContentDocumentId": content_doc_id,
         "LinkedEntityId": record_id,
         "ShareType": "I",
-        "Visibility": "InternalUsers",
+        "Visibility": "AllUsers",
     })
 
 
