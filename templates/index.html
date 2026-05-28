@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Carga de Guías (Drive)</title>
+  <title>Carga de Guías</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
 <body class="bg-slate-100 min-h-screen flex items-center justify-center p-4">
   <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-xl border-t-8 border-blue-600">
     <h1 class="text-xl font-black text-center text-gray-800 mb-6 uppercase tracking-wider">
-      Guías de Entrega (Google Drive)
+      Guías de Entrega
     </h1>
 
     <div class="space-y-6">
@@ -24,7 +24,8 @@
             <input
               type="text"
               id="order_number_input"
-              placeholder="00077845"
+              placeholder="13563"
+              inputmode="numeric"
               class="flex-1 border-gray-300 border p-3 rounded-r-lg focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
@@ -40,7 +41,6 @@
         <div class="mt-4">
           <div class="flex items-center justify-between">
             <p class="text-xs font-bold text-gray-500 uppercase">Órdenes seleccionadas</p>
-
             <button id="add_order_btn" type="button"
               class="text-xs font-black text-blue-600 hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
               disabled>
@@ -49,6 +49,31 @@
           </div>
 
           <div id="orders_list" class="mt-2 space-y-2"></div>
+
+          <!-- Input inline para agregar otra OP -->
+          <div id="add_order_row" class="hidden mt-3">
+            <div class="flex gap-2">
+              <div class="flex flex-1 shadow-sm">
+                <span class="inline-flex items-center px-3 bg-gray-100 border border-r-0 border-gray-300 rounded-l-lg text-gray-500 text-sm font-bold">OP-</span>
+                <input
+                  type="text"
+                  id="add_order_input"
+                  placeholder="13639"
+                  inputmode="numeric"
+                  class="flex-1 border-gray-300 border p-2 rounded-r-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                />
+              </div>
+              <button type="button" id="confirm_add_btn"
+                class="bg-blue-600 text-white px-3 rounded-lg font-bold hover:bg-blue-700 text-sm">
+                Agregar
+              </button>
+              <button type="button" id="cancel_add_btn"
+                class="bg-gray-100 text-gray-600 px-3 rounded-lg font-bold hover:bg-gray-200 text-sm">
+                ✕
+              </button>
+            </div>
+            <p id="add_order_error" class="mt-1 text-xs text-red-600 hidden"></p>
+          </div>
 
           <p id="client_hint" class="mt-2 text-xs text-gray-500 hidden">
             Todas las OP deben ser del mismo cliente.
@@ -60,10 +85,9 @@
 
       <!-- Paso 2 + 3 -->
       <form id="upload_form" class="space-y-6 opacity-30 pointer-events-none transition-opacity duration-500">
-        <!-- guardamos las órdenes en JSON -->
         <input type="hidden" name="order_numbers_json" id="hidden_orders_json" />
 
-        <!-- Captura por cámara (cola) -->
+        <!-- Captura por cámara -->
         <div>
           <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Paso 2: Tomar Fotos</label>
 
@@ -80,7 +104,7 @@
           </div>
 
           <p class="text-xs text-gray-500 mt-2">
-            Se abre la cámara y cada foto tomada se agrega a la cola. Luego puedes borrar antes de subir.
+            Se abre la cámara y cada foto tomada se agrega a la cola. Puedes borrar antes de subir.
           </p>
 
           <input type="file" id="camera_input" accept="image/*" capture="environment" class="hidden" />
@@ -89,7 +113,7 @@
         <!-- Preview -->
         <div>
           <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Previsualización</label>
-          <div id="preview_grid" class="grid grid-cols-3 gap-3"></div>
+          <div id="preview_grid" class="grid grid-cols-3 gap-3 hidden"></div>
           <p id="empty_preview" class="text-sm text-gray-500 bg-gray-50 border border-dashed rounded-lg p-3">
             Aún no seleccionas fotos.
           </p>
@@ -113,32 +137,36 @@
   </div>
 
   <script>
-    const input = document.getElementById('order_number_input');
-    const display = document.getElementById('op_name_display');
-    const form = document.getElementById('upload_form');
-
+    const input          = document.getElementById('order_number_input');
+    const display        = document.getElementById('op_name_display');
+    const form           = document.getElementById('upload_form');
     const hiddenOrdersJson = document.getElementById('hidden_orders_json');
-    const addOrderBtn = document.getElementById('add_order_btn');
-    const ordersList = document.getElementById('orders_list');
-    const clientHint = document.getElementById('client_hint');
-
-    const cameraInput = document.getElementById('camera_input');
-    const takePhotoBtn = document.getElementById('take_photo_btn');
+    const addOrderBtn    = document.getElementById('add_order_btn');
+    const addOrderRow    = document.getElementById('add_order_row');
+    const addOrderInput  = document.getElementById('add_order_input');
+    const confirmAddBtn  = document.getElementById('confirm_add_btn');
+    const cancelAddBtn   = document.getElementById('cancel_add_btn');
+    const addOrderError  = document.getElementById('add_order_error');
+    const ordersList     = document.getElementById('orders_list');
+    const clientHint     = document.getElementById('client_hint');
+    const cameraInput    = document.getElementById('camera_input');
+    const takePhotoBtn   = document.getElementById('take_photo_btn');
     const clearPhotosBtn = document.getElementById('clear_photos_btn');
+    const previewGrid    = document.getElementById('preview_grid');
+    const emptyPreview   = document.getElementById('empty_preview');
+    const submitBtn      = document.getElementById('submit_btn');
+    const statusLog      = document.getElementById('status_log');
+    const clearLogBtn    = document.getElementById('clear_log');
 
-    const previewGrid = document.getElementById('preview_grid');
-    const emptyPreview = document.getElementById('empty_preview');
+    let selectedFiles  = [];
+    let sse            = null;
+    let selectedOrders = []; // [{raw, op, name, client_name, has_delivery_url}]
+    let clientNameRef  = null;
 
-    const submitBtn = document.getElementById('submit_btn');
-    const statusLog = document.getElementById('status_log');
-    const clearLogBtn = document.getElementById('clear_log');
-
-    let selectedFiles = [];
-    let sse = null;
-
-    // Estado de órdenes seleccionadas
-    let selectedOrders = []; // [{raw, op, name, client_name}]
-    let clientNameRef = null;
+    // ====== Utilidades ======
+    function soloDigitos(val) {
+      return val.replace(/[^0-9]/g, '').trim();
+    }
 
     function bloquearForm() {
       form.classList.add('opacity-30', 'pointer-events-none');
@@ -153,25 +181,38 @@
       updateSubmitState();
     }
 
-    // ====== LOGGER COMPACTO (máx 4 líneas) ======
-    const steps = {
-      start:   { order: 1 },
-      upload:  { order: 2 },
-      sf:      { order: 3 },
-      done:    { order: 4 }
-    };
+    function resetAll() {
+      selectedOrders = [];
+      clientNameRef  = null;
+      hiddenOrdersJson.value = "";
+      input.value    = "";
+      display.classList.add("hidden");
+      display.innerText = "";
+      addOrderRow.classList.add("hidden");
+      addOrderInput.value = "";
+      addOrderError.classList.add("hidden");
+      selectedFiles  = [];
+      renderPreview();
+      renderOrders();
+      bloquearForm();
+      resetCompactLog();
+    }
 
+    // ====== Logger compacto (máx 4 pasos) ======
+    const steps = {
+      start:  { order: 1 },
+      upload: { order: 2 },
+      sf:     { order: 3 },
+      done:   { order: 4 }
+    };
     const stepState = { start: null, upload: null, sf: null, done: null };
 
     function resetCompactLog() {
-      stepState.start = null;
-      stepState.upload = null;
-      stepState.sf = null;
-      stepState.done = null;
+      stepState.start = stepState.upload = stepState.sf = stepState.done = null;
       renderCompactLog();
     }
 
-    function setStep(key, text, kind="info") {
+    function setStep(key, text, kind = "info") {
       if (!steps[key]) return;
       stepState[key] = { text, kind };
       renderCompactLog();
@@ -179,12 +220,9 @@
 
     function renderCompactLog() {
       statusLog.innerHTML = "";
-      const orderedKeys = Object.keys(steps).sort((a,b) => steps[a].order - steps[b].order);
-
-      orderedKeys.forEach(k => {
+      Object.keys(steps).sort((a, b) => steps[a].order - steps[b].order).forEach(k => {
         const item = stepState[k];
         if (!item) return;
-
         const el = document.createElement("div");
         el.className = "leading-snug";
         if (item.kind === "error") el.classList.add("text-red-700", "font-bold");
@@ -195,42 +233,36 @@
       });
     }
 
-    function handleBackendMsg(msg, kind="info") {
+    function handleBackendMsg(msg, kind = "info") {
       const raw = (msg || "").trim();
-      const m = raw.toLowerCase();
+      const m   = raw.toLowerCase();
 
       if (m.includes("verificando") && m.includes("salesforce")) {
         setStep("start", "🔎 Verificando órdenes...");
         return;
       }
       if (m.includes("órdenes verificadas")) {
-        // ej: "✅ Órdenes verificadas (3)."
         setStep("start", raw, "done");
         return;
       }
-      if (m.includes("orden no encontrada") || m.includes("no pertenecen al mismo cliente") || m.includes("enlace_de_fotos__c")) {
-        setStep("done", "❌ Revisa las órdenes (cliente/links).", "error");
+      if (m.includes("orden no encontrada") || m.includes("no pertenecen al mismo cliente")) {
+        setStep("done", "❌ Revisa las órdenes.", "error");
         return;
       }
-
       if (m.includes("subiendo")) {
         const match = raw.match(/subiendo\s+(\d+)\/(\d+)/i);
         if (match) setStep("upload", `⬆️ Subiendo fotos (${match[1]}/${match[2]})...`);
-        else setStep("upload", "⬆️ Subiendo fotos...");
+        else       setStep("upload", "⬆️ Subiendo fotos...");
         return;
       }
-
-      if (m.includes("guardando link de carpeta en salesforce")) {
+      if (m.includes("guardando link en salesforce")) {
         setStep("sf", "🧾 Guardando en Salesforce...");
         return;
       }
       if (m.includes("guardado en salesforce")) {
-        // ej: "✅ Guardado en Salesforce (3)."
         setStep("sf", raw, "done");
         return;
       }
-
-      // warnings técnicos no se muestran
       if (m.includes("make no respondió") || m.includes("no se pudo hacer público")) return;
 
       if (kind === "error" || m.startsWith("⚠️ error") || m.startsWith("error")) {
@@ -251,53 +283,64 @@
         </div>`;
         addOrderBtn.disabled = true;
         clientHint.classList.add("hidden");
-      } else {
-        addOrderBtn.disabled = false;
-        clientHint.classList.remove("hidden");
-
-        selectedOrders.forEach((o, idx) => {
-          const card = document.createElement("div");
-          card.className = "flex items-center justify-between bg-gray-50 border rounded-lg p-3";
-
-          const left = document.createElement("div");
-          left.className = "min-w-0";
-          left.innerHTML = `
-            <div class="text-sm font-black text-gray-800 truncate">${o.op}</div>
-            <div class="text-xs text-gray-500 font-bold truncate">${o.name || ""}</div>
-          `;
-
-          const btn = document.createElement("button");
-          btn.type = "button";
-          btn.className = "ml-3 text-xs font-black text-red-600 hover:underline";
-          btn.textContent = "Quitar";
-          btn.onclick = () => {
-            selectedOrders.splice(idx, 1);
-            // recalcular client ref
-            if (!selectedOrders.length) {
-              clientNameRef = null;
-              hiddenOrdersJson.value = "";
-              bloquearForm();
-            } else {
-              clientNameRef = selectedOrders[0].client_name;
-              syncHiddenOrders();
-              habilitarForm();
-            }
-            renderOrders();
-            updateSubmitState();
-          };
-
-          card.appendChild(left);
-          card.appendChild(btn);
-          ordersList.appendChild(card);
-        });
+        return;
       }
+
+      addOrderBtn.disabled = false;
+      clientHint.classList.remove("hidden");
+
+      selectedOrders.forEach((o, idx) => {
+        const card = document.createElement("div");
+        card.className = "bg-gray-50 border rounded-lg p-3";
+
+        const row = document.createElement("div");
+        row.className = "flex items-center justify-between";
+
+        const left = document.createElement("div");
+        left.className = "min-w-0";
+        left.innerHTML = `
+          <div class="text-sm font-black text-gray-800 truncate">${o.op}</div>
+          <div class="text-xs text-gray-500 font-bold truncate">${o.name || ""}</div>
+        `;
+
+        if (o.has_delivery_url) {
+          const warn = document.createElement("div");
+          warn.className = "text-xs text-amber-600 font-bold mt-1";
+          warn.textContent = "⚠️ Ya tiene guía de entrega (se sobreescribirá)";
+          left.appendChild(warn);
+        }
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ml-3 shrink-0 text-xs font-black text-red-600 hover:underline";
+        btn.textContent = "Quitar";
+        btn.onclick = () => {
+          selectedOrders.splice(idx, 1);
+          if (!selectedOrders.length) {
+            clientNameRef = null;
+            hiddenOrdersJson.value = "";
+            addOrderRow.classList.add("hidden");
+            bloquearForm();
+          } else {
+            clientNameRef = selectedOrders[0].client_name;
+            syncHiddenOrders();
+            habilitarForm();
+          }
+          renderOrders();
+          updateSubmitState();
+        };
+
+        row.appendChild(left);
+        row.appendChild(btn);
+        card.appendChild(row);
+        ordersList.appendChild(card);
+      });
 
       syncHiddenOrders();
     }
 
     function syncHiddenOrders() {
-      const raws = selectedOrders.map(o => o.raw);
-      hiddenOrdersJson.value = JSON.stringify(raws);
+      hiddenOrdersJson.value = JSON.stringify(selectedOrders.map(o => o.raw));
     }
 
     async function fetchOrderInfo(rawNumber) {
@@ -306,8 +349,8 @@
     }
 
     async function buscarOrdenPrimera() {
-      const num = input.value.trim();
-      if (!num) return alert("Ingresa un número");
+      const num = soloDigitos(input.value);
+      if (!num) return;
 
       display.classList.remove('hidden');
       display.innerText = "🔍 Buscando...";
@@ -322,17 +365,17 @@
           display.innerText = "❌ Orden no encontrada";
           display.style.color = "#dc2626";
           selectedOrders = [];
-          clientNameRef = null;
+          clientNameRef  = null;
           renderOrders();
           return;
         }
 
-        // set primera orden
         selectedOrders = [{
           raw: num,
-          op: data.op,
+          op:  data.op,
           name: data.name,
-          client_name: data.client_name
+          client_name: data.client_name,
+          has_delivery_url: data.has_delivery_url,
         }];
         clientNameRef = data.client_name;
 
@@ -342,63 +385,107 @@
         renderOrders();
         habilitarForm();
         resetCompactLog();
-      } catch (e) {
+      } catch {
         display.innerText = "⚠️ Error consultando la orden";
         display.style.color = "#dc2626";
         selectedOrders = [];
-        clientNameRef = null;
+        clientNameRef  = null;
         renderOrders();
       }
     }
 
-    addOrderBtn.addEventListener("click", async () => {
-      const num = prompt("Ingresa otra OP (solo números, sin OP-):");
+    // Enter en el input principal lanza la búsqueda
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") buscarOrdenPrimera();
+    });
+
+    // ====== Agregar otra OP (inline) ======
+    addOrderBtn.addEventListener("click", () => {
+      addOrderRow.classList.remove("hidden");
+      addOrderError.classList.add("hidden");
+      addOrderInput.value = "";
+      addOrderInput.focus();
+    });
+
+    cancelAddBtn.addEventListener("click", () => {
+      addOrderRow.classList.add("hidden");
+      addOrderError.classList.add("hidden");
+    });
+
+    async function agregarOtroOp() {
+      const num = soloDigitos(addOrderInput.value);
       if (!num) return;
 
-      // evita duplicados por raw exacto
-      if (selectedOrders.some(o => (o.raw || "").trim() === num.trim())) {
-        alert("Esa OP ya está agregada.");
+      addOrderError.classList.add("hidden");
+
+      if (selectedOrders.some(o => soloDigitos(o.raw) === num)) {
+        addOrderError.textContent = "Esa OP ya está agregada.";
+        addOrderError.classList.remove("hidden");
         return;
       }
+
+      confirmAddBtn.disabled = true;
+      confirmAddBtn.textContent = "...";
 
       try {
         const data = await fetchOrderInfo(num);
 
         if (!data.success) {
-          alert("Orden no encontrada.");
+          addOrderError.textContent = "Orden no encontrada.";
+          addOrderError.classList.remove("hidden");
           return;
         }
 
         if (!data.client_name) {
-          alert("Esa orden no tiene Nombre_del_cliente__c.");
+          addOrderError.textContent = "Esa orden no tiene cliente asignado.";
+          addOrderError.classList.remove("hidden");
           return;
         }
 
         if (clientNameRef && data.client_name !== clientNameRef) {
-          alert("Esa orden NO es del mismo cliente. No se puede agregar.");
+          addOrderError.textContent = "Esa OP es de otro cliente. No se puede agregar.";
+          addOrderError.classList.remove("hidden");
           return;
         }
 
         selectedOrders.push({
           raw: num,
-          op: data.op,
+          op:  data.op,
           name: data.name,
-          client_name: data.client_name
+          client_name: data.client_name,
+          has_delivery_url: data.has_delivery_url,
         });
 
         clientNameRef = selectedOrders[0].client_name;
+        addOrderRow.classList.add("hidden");
+        addOrderInput.value = "";
+        addOrderError.classList.add("hidden");
         renderOrders();
         updateSubmitState();
-      } catch (e) {
-        alert("Error consultando la orden.");
+      } catch {
+        addOrderError.textContent = "Error consultando la orden.";
+        addOrderError.classList.remove("hidden");
+      } finally {
+        confirmAddBtn.disabled = false;
+        confirmAddBtn.textContent = "Agregar";
+      }
+    }
+
+    confirmAddBtn.addEventListener("click", agregarOtroOp);
+
+    addOrderInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") agregarOtroOp();
+      if (e.key === "Escape") {
+        addOrderRow.classList.add("hidden");
+        addOrderError.classList.add("hidden");
       }
     });
 
-    // ====== Fotos / submit ======
+    // ====== Fotos ======
     function updateSubmitState() {
       const okOrders = selectedOrders.length > 0;
-      const okFiles = selectedFiles.length > 0;
-      submitBtn.disabled = !(okOrders && okFiles);
+      const okFiles  = selectedFiles.length > 0;
+      submitBtn.disabled    = !(okOrders && okFiles);
       clearPhotosBtn.disabled = !(okOrders && okFiles);
       takePhotoBtn.disabled = !okOrders;
     }
@@ -433,10 +520,7 @@
         btn.type = "button";
         btn.className = "absolute top-2 right-2 bg-black/70 text-white w-7 h-7 rounded-full font-black hover:bg-black";
         btn.textContent = "×";
-        btn.onclick = () => {
-          selectedFiles.splice(idx, 1);
-          renderPreview();
-        };
+        btn.onclick = () => { selectedFiles.splice(idx, 1); renderPreview(); };
 
         card.appendChild(img);
         card.appendChild(btn);
@@ -453,22 +537,15 @@
       cameraInput.click();
     });
 
-    cameraInput.addEventListener("change", async () => {
-      const file = (cameraInput.files && cameraInput.files[0]) ? cameraInput.files[0] : null;
+    cameraInput.addEventListener("change", () => {
+      const file = cameraInput.files?.[0];
       if (!file) return;
+      if (!(file.type || "").startsWith("image/")) return;
 
-      if (!(file.type || "").startsWith("image/")) {
-        alert("Solo imágenes.");
-        return;
-      }
-
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+      const ext   = (file.name.split(".").pop() || "jpg").toLowerCase();
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const newName = `foto_${stamp}.${ext}`;
-
-      const renamed = new File([file], newName, { type: file.type, lastModified: Date.now() });
+      const renamed = new File([file], `foto_${stamp}.${ext}`, { type: file.type, lastModified: Date.now() });
       selectedFiles.push(renamed);
-
       renderPreview();
     });
 
@@ -478,6 +555,7 @@
       resetCompactLog();
     });
 
+    // ====== Submit ======
     submitBtn.addEventListener("click", async () => {
       if (submitBtn.disabled) return;
       if (sse) { sse.close(); sse = null; }
@@ -493,7 +571,7 @@
       submitBtn.textContent = "SUBIENDO...";
 
       try {
-        const res = await fetch("/start_upload", { method: "POST", body: fd });
+        const res  = await fetch("/start_upload", { method: "POST", body: fd });
         const data = await res.json();
 
         if (!data.success) {
@@ -503,37 +581,34 @@
           return;
         }
 
-        const jobId = data.job_id;
-        sse = new EventSource(`/progress/${jobId}`);
+        sse = new EventSource(`/progress/${data.job_id}`);
 
         sse.addEventListener("message", (e) => handleBackendMsg(e.data, "info"));
-        sse.addEventListener("warn", (e) => handleBackendMsg(e.data, "warn"));
-        sse.addEventListener("error", (e) => handleBackendMsg(e.data, "error"));
-        sse.addEventListener("done", (e) => handleBackendMsg(e.data, "done"));
+        sse.addEventListener("warn",    (e) => handleBackendMsg(e.data, "warn"));
+        sse.addEventListener("error",   (e) => handleBackendMsg(e.data, "error"));
+        sse.addEventListener("done",    (e) => handleBackendMsg(e.data, "done"));
 
         sse.addEventListener("final", (e) => {
           try {
             const payload = JSON.parse(e.data);
             if (payload.ok) {
-              const link = payload.result && payload.result.folder_link ? payload.result.folder_link : null;
-              if (link) setStep("done", "✅ Mensaje enviado exitosamente.", "done");
-              else setStep("done", "✅ Mensaje enviado exitosamente.", "done");
-
-              selectedFiles = [];
-              renderPreview();
+              setStep("done", "✅ Guía guardada en Salesforce.", "done");
+              setTimeout(() => resetAll(), 2500);
             } else {
               setStep("done", "❌ Terminó con error.", "error");
+              submitBtn.textContent = "SUBIR FOTOS";
+              updateSubmitState();
             }
           } catch {
             setStep("done", "⚠️ Final recibido, pero no se pudo leer.", "warn");
+            submitBtn.textContent = "SUBIR FOTOS";
+            updateSubmitState();
           }
 
           if (sse) { sse.close(); sse = null; }
-          submitBtn.textContent = "SUBIR FOTOS";
-          updateSubmitState();
         });
 
-      } catch (err) {
+      } catch {
         setStep("done", "❌ Error de red.", "error");
         submitBtn.textContent = "SUBIR FOTOS";
         updateSubmitState();
@@ -541,11 +616,8 @@
     });
 
     // Init
-    function init() {
-      bloquearForm();
-      renderOrders();
-    }
-    init();
+    bloquearForm();
+    renderOrders();
   </script>
 </body>
 </html>

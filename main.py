@@ -2,21 +2,16 @@ import os
 import json
 import uuid
 import time
+import base64
 import threading
 import re
-import logging
 from collections import deque
 from datetime import datetime
-from io import BytesIO
 from functools import wraps
 
 import requests
 from flask import Flask, render_template, request, jsonify, Response, abort
 from simple_salesforce import Salesforce
-
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 
 
 # ===============================
@@ -83,7 +78,6 @@ def get_sf():
     """Devuelve una instancia de Salesforce activa, reconectando si la sesión expiró."""
     global _sf
     with _sf_lock:
-        # Si ya hay sesión, prueba un query liviano para verificar que sigue viva
         if _sf is not None:
             try:
                 _sf.query("SELECT Id FROM Organization LIMIT 1")
@@ -92,7 +86,6 @@ def get_sf():
                 syslog("WARNING", f"Sesión Salesforce muerta, reconectando... ({e})")
                 _sf = None
 
-        # Reconectar
         try:
             _sf = Salesforce(username=SF_USER, password=SF_PASS, security_token=SF_SECURITY_TOKEN)
             syslog("INFO", "Salesforce reconectado correctamente", {"user": SF_USER})
@@ -103,7 +96,6 @@ def get_sf():
             return None
 
 
-# Intento de conexión inicial al arrancar (no fatal si falla)
 try:
     get_sf()
 except Exception:
@@ -111,109 +103,11 @@ except Exception:
 
 
 # ===============================
-# Google Drive (Service Account)
-# ===============================
-SCOPES = ["https://www.googleapis.com/auth/drive"]
-CREDENTIALS_FILE = "credentials.json"
-USE_SHARED_DRIVE = True
-_drive_service = None
-
-
-def get_drive_service():
-    global _drive_service
-    if _drive_service:
-        return _drive_service
-
-    try:
-        creds = service_account.Credentials.from_service_account_file(
-            CREDENTIALS_FILE,
-            scopes=SCOPES
-        )
-        _drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
-        syslog("INFO", "Google Drive service account conectado correctamente")
-        return _drive_service
-    except Exception as e:
-        syslog("CRITICAL", f"Error conectando a Google Drive: {e}")
-        raise
-
-
-# ===============================
-# Helpers
+# Helpers — Salesforce
 # ===============================
 def normalizar_op(numero: str) -> str:
-    numero = (numero or "").strip()
-    return f"OP-00{numero}"
-
-
-def extract_drive_folder_id(url_or_id: str) -> str | None:
-    s = (url_or_id or "").strip()
-    if not s:
-        return None
-
-    if "http" not in s.lower() and "drive.google.com" not in s.lower():
-        if len(s) >= 10 and re.fullmatch(r"[A-Za-z0-9_-]+", s):
-            return s
-        return None
-
-    m = re.search(r"/folders/([A-Za-z0-9_-]+)", s)
-    if m:
-        return m.group(1)
-
-    return None
-
-
-def ensure_drive_folder(service, folder_name: str, parent_id: str):
-    safe_name = folder_name.replace("'", "\\'")
-    q = (
-        "mimeType='application/vnd.google-apps.folder' and "
-        f"name='{safe_name}' and "
-        f"'{parent_id}' in parents and "
-        "trashed=false"
-    )
-
-    list_kwargs = {
-        "q": q,
-        "fields": "files(id,name,webViewLink)",
-    }
-
-    if USE_SHARED_DRIVE:
-        list_kwargs.update({
-            "supportsAllDrives": True,
-            "includeItemsFromAllDrives": True,
-        })
-
-    res = service.files().list(**list_kwargs).execute()
-    files = res.get("files", [])
-    if files:
-        f0 = files[0]
-        link = f0.get("webViewLink") or f"https://drive.google.com/drive/folders/{f0['id']}"
-        return f0["id"], link
-
-    metadata = {
-        "name": folder_name,
-        "mimeType": "application/vnd.google-apps.folder",
-        "parents": [parent_id],
-    }
-
-    create_kwargs = {
-        "body": metadata,
-        "fields": "id,webViewLink",
-    }
-
-    if USE_SHARED_DRIVE:
-        create_kwargs["supportsAllDrives"] = True
-
-    folder = service.files().create(**create_kwargs).execute()
-    link = folder.get("webViewLink") or f"https://drive.google.com/drive/folders/{folder['id']}"
-    return folder["id"], link
-
-
-def make_public_read(service, file_id: str):
-    perm_body = {"type": "anyone", "role": "reader"}
-    perm_kwargs = {"fileId": file_id, "body": perm_body}
-    if USE_SHARED_DRIVE:
-        perm_kwargs["supportsAllDrives"] = True
-    service.permissions().create(**perm_kwargs).execute()
+    numero = re.sub(r'[^0-9]', '', (numero or "").strip())
+    return f"OP-{numero.zfill(7)}"
 
 
 def sf_get_order_info(op_completa: str) -> dict | None:
@@ -221,7 +115,7 @@ def sf_get_order_info(op_completa: str) -> dict | None:
     if not client:
         return None
     query = (
-        "SELECT Id, Name, Nombre_del_cliente__c, Enlace_de_Fotos__c "
+        "SELECT Id, Name, Nombre_del_cliente__c, Link_Guia_de_Entrega__c "
         "FROM Orden_Proveedor__c "
         f"WHERE Orden_Proveedor_Nro__c = '{op_completa}'"
     )
@@ -229,6 +123,31 @@ def sf_get_order_info(op_completa: str) -> dict | None:
     if result.get("totalSize", 0) == 0:
         return None
     return result["records"][0]
+
+
+def sf_upload_photo(sf_client, filename: str, file_bytes: bytes) -> tuple[str, str]:
+    """Sube un archivo a Salesforce Files. Retorna (content_version_id, content_doc_id)."""
+    b64 = base64.b64encode(file_bytes).decode("utf-8")
+    cv_result = sf_client.ContentVersion.create({
+        "Title": filename,
+        "PathOnClient": filename,
+        "VersionData": b64,
+        "Origin": "H",
+    })
+    cv_id = cv_result["id"]
+    cv_data = sf_client.query(f"SELECT ContentDocumentId FROM ContentVersion WHERE Id = '{cv_id}'")
+    content_doc_id = cv_data["records"][0]["ContentDocumentId"]
+    return cv_id, content_doc_id
+
+
+def sf_link_file_to_record(sf_client, content_doc_id: str, record_id: str):
+    """Vincula un ContentDocument a un registro de Salesforce."""
+    sf_client.ContentDocumentLink.create({
+        "ContentDocumentId": content_doc_id,
+        "LinkedEntityId": record_id,
+        "ShareType": "I",
+        "Visibility": "InternalUsers",
+    })
 
 
 # ===============================
@@ -266,8 +185,6 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
             syslog("ERROR", f"[job:{job_id}] {msg}")
             mark_done(job_id, False)
             return
-
-        service = get_drive_service()
 
         seen = set()
         ops = []
@@ -320,29 +237,20 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
                 mark_done(job_id, False)
                 return
 
-            base_url = info.get("Enlace_de_Fotos__c")
-            base_id = extract_drive_folder_id(base_url)
-            if not base_id:
-                msg = f"{op} no tiene Enlace_de_Fotos__c válido"
-                push_event(job_id, f"❌ {msg}", "error")
-                syslog("ERROR", f"[job:{job_id}] {msg}", {"url_raw": base_url})
-                mark_done(job_id, False)
-                return
-
             orders_info.append({
                 "op": op,
                 "record_id": info["Id"],
                 "name": info.get("Name"),
                 "client_name": client_name,
-                "base_folder_id": base_id
             })
 
         push_event(job_id, f"✅ Órdenes verificadas ({len(orders_info)}).")
         syslog("INFO", f"[job:{job_id}] Órdenes verificadas OK", {"ops": [o["op"] for o in orders_info]})
 
         total_photos = len(files_payload)
-        results_per_order = []
 
+        # Cada foto se sube UNA sola vez y se vincula a todas las órdenes
+        content_doc_ids = []
         for i, f in enumerate(files_payload, start=1):
             push_event(job_id, f"⬆️ Subiendo {i}/{total_photos}: {f['filename']} ...")
             syslog("DEBUG", f"[job:{job_id}] Subiendo foto {i}/{total_photos}", {
@@ -351,65 +259,41 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
                 "size_kb": round(len(f["bytes"]) / 1024, 1)
             })
 
-            for order in orders_info:
-                try:
-                    entrega_folder_id, entrega_folder_link = ensure_drive_folder(
-                        service, "ENTREGA", order["base_folder_id"]
-                    )
-
-                    bio = BytesIO(f["bytes"])
-                    media = MediaIoBaseUpload(bio, mimetype=f["mimetype"], resumable=False)
-
-                    metadata = {
-                        "name": f"{order['op']}_{i:02d}_{f['filename']}",
-                        "parents": [entrega_folder_id]
-                    }
-
-                    create_file_kwargs = {
-                        "body": metadata,
-                        "media_body": media,
-                        "fields": "id, webViewLink",
-                    }
-                    if USE_SHARED_DRIVE:
-                        create_file_kwargs["supportsAllDrives"] = True
-
-                    created = service.files().create(**create_file_kwargs).execute()
-                    file_id = created["id"]
-
-                    try:
-                        make_public_read(service, file_id)
-                    except Exception as e:
-                        push_event(job_id, "⚠️ No se pudo hacer público el archivo (Drive policy).", "warn")
-                        syslog("WARNING", f"[job:{job_id}] make_public_read falló", {
-                            "file_id": file_id,
-                            "error": str(e)
-                        })
-
-                    order.setdefault("entrega_folder_link", entrega_folder_link)
-
-                except Exception as e:
-                    msg = f"Error subiendo foto '{f['filename']}' para {order['op']}"
-                    push_event(job_id, f"❌ {msg}", "error")
-                    syslog("ERROR", f"[job:{job_id}] {msg}", {"error": str(e)})
-                    mark_done(job_id, False)
-                    return
+            try:
+                _, content_doc_id = sf_upload_photo(sf_client, f["filename"], f["bytes"])
+                content_doc_ids.append(content_doc_id)
+                for order in orders_info:
+                    sf_link_file_to_record(sf_client, content_doc_id, order["record_id"])
+            except Exception as e:
+                msg = f"Error subiendo foto '{f['filename']}'"
+                push_event(job_id, f"❌ {msg}", "error")
+                syslog("ERROR", f"[job:{job_id}] {msg}", {"error": str(e)})
+                mark_done(job_id, False)
+                return
 
         syslog("INFO", f"[job:{job_id}] Todas las fotos subidas OK", {"total": total_photos})
 
-        push_event(job_id, "🧾 Guardando link de carpeta en Salesforce...")
+        push_event(job_id, "🧾 Guardando links en Salesforce...")
 
+        results_per_order = []
         for order in orders_info:
             try:
                 sf_active = get_sf()
                 if not sf_active:
                     raise Exception("Salesforce no disponible al actualizar registro")
+
+                base = f"https://{sf_active.sf_instance}/sfc/servlet.shepherd/document/download"
+                links_html = "<br/>".join(
+                    f'<a href="{base}/{doc_id}">Foto {i}</a>'
+                    for i, doc_id in enumerate(content_doc_ids, 1)
+                )
                 sf_active.Orden_Proveedor__c.update(order["record_id"], {
-                    "Guia_de_Entrega_URL__c": order["entrega_folder_link"]
+                    "Link_Guia_de_Entrega__c": links_html
                 })
                 results_per_order.append({
                     "order_id": order["record_id"],
                     "order_number": order["op"],
-                    "drive_folder": order["entrega_folder_link"]
+                    "links_html": links_html
                 })
                 syslog("INFO", f"[job:{job_id}] SF actualizado OK", {"op": order["op"]})
             except Exception as e:
@@ -427,7 +311,6 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
         webhook_data = {
             "order_id": legacy_first["order_id"],
             "order_number": legacy_first["order_number"],
-            "drive_folder": legacy_first["drive_folder"],
             "uploaded_count": total_photos,
             "timestamp": datetime.now().isoformat(),
             "client_name": client_name_ref,
@@ -454,7 +337,6 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
         mark_done(job_id, True, {
             "client_name": client_name_ref,
             "orders": results_per_order,
-            "folder_link": legacy_first["drive_folder"]
         })
 
     except Exception as e:
@@ -489,7 +371,8 @@ def get_order_info(number):
             "success": True,
             "name": info.get("Name"),
             "op": op,
-            "client_name": (info.get("Nombre_del_cliente__c") or "").strip()
+            "client_name": (info.get("Nombre_del_cliente__c") or "").strip(),
+            "has_delivery_url": bool(info.get("Link_Guia_de_Entrega__c")),
         })
     except Exception as e:
         syslog("ERROR", "get_order_info: excepción", {"op": op, "error": str(e)})
@@ -775,7 +658,6 @@ def admin_status():
     return jsonify({
         "timestamp": datetime.now().isoformat(),
         "salesforce_connected": get_sf() is not None,
-        "drive_connected": _drive_service is not None,
         "logs_in_buffer": total_logs,
         "errors_in_buffer": errors,
         "active_jobs": active_jobs,
