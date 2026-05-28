@@ -70,6 +70,7 @@ SF_SECURITY_TOKEN = os.environ.get("SF_SECURITY_TOKEN", "iCbyXWW5eZn0XUzx3PyZAX3
 
 MAKE_WEBHOOK_URL = "https://hook.us2.make.com/ilh879hn49xq3dxxhbihguy2x9vtcjx1"
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "b437ae5a3032b21ed745a4113d29a21f")
+SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "jefe2024")
 
 _sf = None
 _sf_lock = threading.Lock()
@@ -378,6 +379,29 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
 
 
 # ===============================
+# Helpers — Formato de fechas
+# ===============================
+from datetime import timezone, timedelta
+
+_ECUADOR = timezone(timedelta(hours=-5))
+_MESES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
+
+
+def _sf_dt_to_local(dt_str: str):
+    """Convierte datetime de Salesforce a fecha y hora en hora Ecuador."""
+    if not dt_str:
+        return "", ""
+    try:
+        clean = dt_str.replace("+0000", "+00:00")
+        if "." in clean:
+            clean = clean[:clean.index(".")] + clean[clean.index("+"):]
+        dt = datetime.fromisoformat(clean).astimezone(_ECUADOR)
+        return f"{dt.day} {_MESES[dt.month-1]} {dt.year}", dt.strftime("%H:%M")
+    except Exception:
+        return dt_str[:10], dt_str[11:16]
+
+
+# ===============================
 # Routes — Aplicación principal
 # ===============================
 @app.route("/", methods=["GET"])
@@ -510,6 +534,53 @@ def progress(job_id):
             time.sleep(0.35)
 
     return Response(event_stream(), mimetype="text/event-stream")
+
+
+# ===============================
+# Routes — Supervisor
+# ===============================
+@app.route("/supervisor")
+def supervisor():
+    token = request.args.get("token", "")
+    wrong = token and token != SUPERVISOR_TOKEN
+
+    if not token or wrong:
+        return render_template("supervisor.html", authenticated=False, wrong=wrong)
+
+    sf_client = get_sf()
+    records = []
+    sf_error = False
+
+    if sf_client:
+        try:
+            result = sf_client.query(
+                "SELECT Name, Nombre_del_cliente__c, Link_Guia_de_Entrega__c, LastModifiedDate "
+                "FROM Orden_Proveedor__c "
+                "WHERE Link_Guia_de_Entrega__c != null "
+                "ORDER BY LastModifiedDate DESC "
+                "LIMIT 200"
+            )
+            for rec in result.get("records", []):
+                date_str, time_str = _sf_dt_to_local(rec.get("LastModifiedDate", ""))
+                records.append({
+                    "op": rec.get("Name", ""),
+                    "client": (rec.get("Nombre_del_cliente__c") or "").strip(),
+                    "links_html": rec.get("Link_Guia_de_Entrega__c") or "",
+                    "date": date_str,
+                    "time": time_str,
+                })
+        except Exception as e:
+            syslog("ERROR", "supervisor: error consultando SF", {"error": str(e)})
+            sf_error = True
+    else:
+        sf_error = True
+
+    return render_template("supervisor.html",
+                           authenticated=True,
+                           token=token,
+                           records=records,
+                           total=len(records),
+                           sf_error=sf_error)
 
 
 # ===============================

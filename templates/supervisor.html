@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Registro de Entregas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-100 min-h-screen">
+
+{% if not authenticated %}
+
+  <!-- Pantalla de login -->
+  <div class="flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white rounded-2xl shadow-xl p-8 w-full max-w-xs border-t-8 border-blue-600">
+      <h1 class="text-lg font-black text-center text-gray-800 mb-1 uppercase tracking-wide">Registro de Entregas</h1>
+      <p class="text-xs text-center text-gray-400 mb-6">Cámara China</p>
+
+      {% if wrong %}
+      <p class="bg-red-50 border border-red-200 text-red-700 text-sm text-center rounded-lg p-2 mb-4 font-bold">
+        Contraseña incorrecta
+      </p>
+      {% endif %}
+
+      <form method="GET" action="/supervisor">
+        <input
+          type="password"
+          name="token"
+          placeholder="Contraseña"
+          autofocus
+          class="w-full border border-gray-300 rounded-xl p-3 text-center text-base outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+        />
+        <button type="submit"
+          class="w-full bg-blue-600 text-white py-3 rounded-xl font-black text-base hover:bg-blue-700 transition-colors">
+          Ingresar
+        </button>
+      </form>
+    </div>
+  </div>
+
+{% else %}
+
+  <!-- Encabezado -->
+  <div class="bg-white border-b shadow-sm sticky top-0 z-10">
+    <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div>
+        <p class="font-black text-gray-800 text-base">Registro de Entregas</p>
+        <p class="text-xs text-gray-400">{{ total }} entrega{% if total != 1 %}s{% endif %} registrada{% if total != 1 %}s{% endif %}</p>
+      </div>
+      <a href="/supervisor?token={{ token }}"
+        class="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-black hover:bg-blue-700 transition-colors">
+        Actualizar
+      </a>
+    </div>
+  </div>
+
+  <!-- Contenido -->
+  <div class="max-w-3xl mx-auto px-4 py-5 space-y-3">
+
+    {% if sf_error %}
+    <div class="bg-red-50 border border-red-200 rounded-xl p-4 text-center text-red-700 font-bold text-sm">
+      No se pudo conectar con Salesforce. Intenta actualizar en un momento.
+    </div>
+    {% elif not records %}
+    <div class="bg-white rounded-xl p-8 text-center text-gray-400 shadow-sm">
+      Aún no hay entregas registradas.
+    </div>
+    {% else %}
+
+    {% for r in records %}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+      <div class="flex items-start justify-between gap-3">
+
+        <!-- Info izquierda -->
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2 flex-wrap mb-1">
+            <span class="font-black text-gray-800 text-sm">{{ r.op }}</span>
+            <span class="text-xs text-gray-400 bg-gray-100 rounded-full px-2 py-0.5">
+              {{ r.date }}&nbsp;&nbsp;{{ r.time }}
+            </span>
+          </div>
+          <p class="text-xs text-gray-500 truncate">{{ r.client }}</p>
+        </div>
+
+        <!-- Fotos derecha -->
+        <div class="shrink-0 flex flex-col items-end gap-1 foto-links">
+          {{ r.links_html | safe }}
+        </div>
+
+      </div>
+    </div>
+    {% endfor %}
+
+    {% endif %}
+  </div>
+
+{% endif %}
+
+<style>
+  .foto-links a {
+    display: inline-block;
+    background: #2563eb;
+    color: #fff;
+    font-weight: 800;
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 8px;
+    text-decoration: none;
+  }
+  .foto-links a:hover {
+    background: #1d4ed8;
+  }
+  .foto-links br {
+    display: block;
+    margin: 2px 0;
+  }
+</style>
+
+</body>
+</html>
