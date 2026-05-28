@@ -282,9 +282,9 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
                 if not sf_active:
                     raise Exception("Salesforce no disponible al actualizar registro")
 
-                base = f"https://{sf_active.sf_instance}/sfc/servlet.shepherd/document/download"
+                base = f"https://{sf_active.sf_instance}/lightning/r/ContentDocument"
                 links_html = "<br/>".join(
-                    f'<a href="{base}/{doc_id}">Foto {i}</a>'
+                    f'<a href="{base}/{doc_id}/view">Foto {i}</a>'
                     for i, doc_id in enumerate(content_doc_ids, 1)
                 )
                 sf_active.Orden_Proveedor__c.update(order["record_id"], {
@@ -310,8 +310,8 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
         legacy_first = results_per_order[0]
         sf_for_url = get_sf()
         if sf_for_url and content_doc_ids:
-            base = f"https://{sf_for_url.sf_instance}/sfc/servlet.shepherd/document/download"
-            photos_url = "\n".join(f"{base}/{doc_id}" for doc_id in content_doc_ids)
+            base = f"https://{sf_for_url.sf_instance}/lightning/r/ContentDocument"
+            photos_url = "\n".join(f"{base}/{doc_id}/view" for doc_id in content_doc_ids)
         else:
             photos_url = ""
 
