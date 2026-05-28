@@ -70,7 +70,6 @@ SF_SECURITY_TOKEN = os.environ.get("SF_SECURITY_TOKEN", "iCbyXWW5eZn0XUzx3PyZAX3
 
 MAKE_WEBHOOK_URL = "https://hook.us2.make.com/ilh879hn49xq3dxxhbihguy2x9vtcjx1"
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "b437ae5a3032b21ed745a4113d29a21f")
-SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "jefe2024")
 
 _sf = None
 _sf_lock = threading.Lock()
@@ -168,6 +167,28 @@ def sf_link_file_to_record(sf_client, content_doc_id: str, record_id: str):
         "ShareType": "I",
         "Visibility": "AllUsers",
     })
+
+
+# ===============================
+# Historial de entregas (en memoria)
+# ===============================
+_history: list = []
+_history_lock = threading.Lock()
+
+
+def add_to_history(op: str, client: str, links_html: str):
+    now = datetime.now(_ECUADOR)
+    entry = {
+        "date": f"{now.day} {_MESES[now.month-1]} {now.year}",
+        "time": now.strftime("%H:%M"),
+        "op": op,
+        "client": client,
+        "links_html": links_html,
+    }
+    with _history_lock:
+        _history.insert(0, entry)
+        if len(_history) > 500:
+            _history.pop()
 
 
 # ===============================
@@ -331,6 +352,9 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
                 return
 
         push_event(job_id, f"✅ Guardado en Salesforce ({len(orders_info)}).")
+
+        for order in results_per_order:
+            add_to_history(order["order_number"], client_name_ref or "", order.get("links_html", ""))
 
         push_event(job_id, "📡 Notificando a Make...")
 
@@ -539,48 +563,11 @@ def progress(job_id):
 # ===============================
 # Routes — Supervisor
 # ===============================
-@app.route("/supervisor")
-def supervisor():
-    token = request.args.get("token", "")
-    wrong = token and token != SUPERVISOR_TOKEN
-
-    if not token or wrong:
-        return render_template("supervisor.html", authenticated=False, wrong=wrong)
-
-    sf_client = get_sf()
-    records = []
-    sf_error = False
-
-    if sf_client:
-        try:
-            result = sf_client.query(
-                "SELECT Name, Nombre_del_cliente__c, Link_Guia_de_Entrega__c, LastModifiedDate "
-                "FROM Orden_Proveedor__c "
-                "WHERE Link_Guia_de_Entrega__c != null "
-                "ORDER BY LastModifiedDate DESC "
-                "LIMIT 200"
-            )
-            for rec in result.get("records", []):
-                date_str, time_str = _sf_dt_to_local(rec.get("LastModifiedDate", ""))
-                records.append({
-                    "op": rec.get("Name", ""),
-                    "client": (rec.get("Nombre_del_cliente__c") or "").strip(),
-                    "links_html": rec.get("Link_Guia_de_Entrega__c") or "",
-                    "date": date_str,
-                    "time": time_str,
-                })
-        except Exception as e:
-            syslog("ERROR", "supervisor: error consultando SF", {"error": str(e)})
-            sf_error = True
-    else:
-        sf_error = True
-
-    return render_template("supervisor.html",
-                           authenticated=True,
-                           token=token,
-                           records=records,
-                           total=len(records),
-                           sf_error=sf_error)
+@app.route("/ver2026")
+def supervisor_view():
+    with _history_lock:
+        entries = list(_history)
+    return render_template("supervisor.html", entries=entries, total=len(entries))
 
 
 # ===============================
