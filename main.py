@@ -69,6 +69,7 @@ SF_PASS = os.environ.get("SF_PASS", "Camara1234")
 SF_SECURITY_TOKEN = os.environ.get("SF_SECURITY_TOKEN", "iCbyXWW5eZn0XUzx3PyZAX3cF")
 
 MAKE_WEBHOOK_URL = "https://hook.us2.make.com/ilh879hn49xq3dxxhbihguy2x9vtcjx1"
+IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "b437ae5a3032b21ed745a4113d29a21f")
 
 _sf = None
 _sf_lock = threading.Lock()
@@ -138,6 +139,24 @@ def sf_upload_photo(sf_client, filename: str, file_bytes: bytes) -> tuple[str, s
     cv_data = sf_client.query(f"SELECT ContentDocumentId FROM ContentVersion WHERE Id = '{cv_id}'")
     content_doc_id = cv_data["records"][0]["ContentDocumentId"]
     return cv_id, content_doc_id
+
+
+def imgbb_upload_photo(file_bytes: bytes, filename: str) -> str | None:
+    """Sube una foto a imgbb y retorna la URL pública directa."""
+    b64 = base64.b64encode(file_bytes).decode("utf-8")
+    try:
+        resp = requests.post(
+            "https://api.imgbb.com/1/upload",
+            data={"key": IMGBB_API_KEY, "image": b64, "name": filename},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("success"):
+            return data["data"]["url"]
+    except Exception as e:
+        syslog("WARNING", "imgbb upload falló", {"filename": filename, "error": str(e)})
+    return None
 
 
 def sf_link_file_to_record(sf_client, content_doc_id: str, record_id: str):
@@ -249,8 +268,9 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
 
         total_photos = len(files_payload)
 
-        # Cada foto se sube UNA sola vez y se vincula a todas las órdenes
+        # Cada foto se sube a Salesforce (interno) e imgbb (URL pública para clientes)
         content_doc_ids = []
+        public_urls = []
         for i, f in enumerate(files_payload, start=1):
             push_event(job_id, f"⬆️ Subiendo {i}/{total_photos}: {f['filename']} ...")
             syslog("DEBUG", f"[job:{job_id}] Subiendo foto {i}/{total_photos}", {
@@ -271,6 +291,13 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
                 mark_done(job_id, False)
                 return
 
+            public_url = imgbb_upload_photo(f["bytes"], f["filename"])
+            if public_url:
+                public_urls.append(public_url)
+                syslog("DEBUG", f"[job:{job_id}] imgbb OK foto {i}", {"url": public_url})
+            else:
+                syslog("WARNING", f"[job:{job_id}] imgbb falló foto {i}, sin URL pública")
+
         syslog("INFO", f"[job:{job_id}] Todas las fotos subidas OK", {"total": total_photos})
 
         push_event(job_id, "🧾 Guardando links en Salesforce...")
@@ -282,11 +309,10 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
                 if not sf_active:
                     raise Exception("Salesforce no disponible al actualizar registro")
 
-                base = f"https://{sf_active.sf_instance}/lightning/r/ContentDocument"
                 links_html = "<br/>".join(
-                    f'<a href="{base}/{doc_id}/view">Foto {i}</a>'
-                    for i, doc_id in enumerate(content_doc_ids, 1)
-                )
+                    f'<a href="{url}">Foto {i}</a>'
+                    for i, url in enumerate(public_urls, 1)
+                ) if public_urls else ""
                 sf_active.Orden_Proveedor__c.update(order["record_id"], {
                     "Link_Guia_de_Entrega__c": links_html
                 })
@@ -308,10 +334,8 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
         push_event(job_id, "📡 Notificando a Make...")
 
         legacy_first = results_per_order[0]
-        sf_for_url = get_sf()
-        if sf_for_url and content_doc_ids:
-            base = f"https://{sf_for_url.sf_instance}/lightning/r/ContentDocument"
-            photos_url = "\n".join(f"{base}/{doc_id}/view" for doc_id in content_doc_ids)
+        if public_urls:
+            photos_url = "\n".join(public_urls)
         else:
             photos_url = ""
 
