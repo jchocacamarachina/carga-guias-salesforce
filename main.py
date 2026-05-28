@@ -308,9 +308,17 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
         push_event(job_id, "📡 Notificando a Make...")
 
         legacy_first = results_per_order[0]
+        sf_for_url = get_sf()
+        if sf_for_url and content_doc_ids:
+            base = f"https://{sf_for_url.sf_instance}/sfc/servlet.shepherd/document/download"
+            photos_url = "\n".join(f"{base}/{doc_id}" for doc_id in content_doc_ids)
+        else:
+            photos_url = ""
+
         webhook_data = {
             "order_id": legacy_first["order_id"],
             "order_number": legacy_first["order_number"],
+            "photos_url": photos_url,
             "uploaded_count": total_photos,
             "timestamp": datetime.now().isoformat(),
             "client_name": client_name_ref,
