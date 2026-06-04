@@ -198,6 +198,8 @@
     }
 
     function resetAll() {
+      sessionStorage.removeItem('cc_orders');
+      sessionStorage.removeItem('cc_client');
       selectedOrders = [];
       clientNameRef  = null;
       hiddenOrdersJson.value = "";
@@ -549,6 +551,9 @@
 
     takePhotoBtn.addEventListener("click", () => {
       if (!selectedOrders.length) return;
+      // Android puede matar la pestaña al abrir la cámara; guardamos estado
+      sessionStorage.setItem('cc_orders', JSON.stringify(selectedOrders));
+      sessionStorage.setItem('cc_client', clientNameRef || '');
       cameraInput.value = "";
       cameraInput.click();
     });
@@ -658,6 +663,25 @@
     // Init
     bloquearForm();
     renderOrders();
+
+    // Si Android recargó la página al volver de la cámara, restaurar órdenes
+    (function () {
+      const saved = sessionStorage.getItem('cc_orders');
+      if (!saved) return;
+      try {
+        const orders = JSON.parse(saved);
+        if (!Array.isArray(orders) || !orders.length) return;
+        selectedOrders = orders;
+        clientNameRef  = sessionStorage.getItem('cc_client') || null;
+        const first    = orders[0];
+        input.value    = first.raw || '';
+        display.innerText   = "✅ Orden: " + (first.name || first.op);
+        display.style.color = "#059669";
+        display.classList.remove('hidden');
+        renderOrders();
+        habilitarForm();
+      } catch {}
+    })();
   </script>
 </body>
 </html>
