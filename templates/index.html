@@ -123,7 +123,8 @@
             Se abre la cámara y cada foto tomada se agrega a la cola. Puedes borrar antes de subir.
           </p>
 
-          <input type="file" id="camera_input" accept="image/*" capture="environment" class="hidden" />
+          <input type="file" id="camera_input" accept="image/*" capture="environment"
+            style="position:fixed;top:-200px;left:-200px;width:1px;height:1px;opacity:0;" />
         </div>
 
         <!-- Preview -->
@@ -549,26 +550,43 @@
       updateSubmitState();
     }
 
-    takePhotoBtn.addEventListener("click", () => {
+    function abrirCamara() {
       if (!selectedOrders.length) return;
-      // Android puede matar la pestaña al abrir la cámara; guardamos estado
       sessionStorage.setItem('cc_orders', JSON.stringify(selectedOrders));
       sessionStorage.setItem('cc_client', clientNameRef || '');
-      cameraInput.value = "";
-      cameraInput.click();
-    });
 
-    cameraInput.addEventListener("change", () => {
-      const file = cameraInput.files?.[0];
-      if (!file) return;
-      if (!(file.type || "").startsWith("image/")) return;
+      // Crear un input nuevo cada vez; reusar el mismo con display:none
+      // hace que el evento change no dispare en muchos Android.
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'image/*';
+      inp.capture = 'environment';
+      inp.style.cssText = 'position:fixed;top:-200px;left:-200px;width:1px;height:1px;opacity:0;';
+      document.body.appendChild(inp);
 
-      const ext   = (file.name.split(".").pop() || "jpg").toLowerCase();
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const renamed = new File([file], `foto_${stamp}.${ext}`, { type: file.type, lastModified: Date.now() });
-      selectedFiles.push(renamed);
-      renderPreview();
-    });
+      inp.addEventListener('change', () => {
+        const file = inp.files?.[0];
+        if (document.body.contains(inp)) document.body.removeChild(inp);
+        if (!file || !(file.type || '').startsWith('image/')) return;
+        const ext   = (file.name.split('.').pop() || 'jpg').toLowerCase();
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const renamed = new File([file], `foto_${stamp}.${ext}`, { type: file.type, lastModified: Date.now() });
+        selectedFiles.push(renamed);
+        renderPreview();
+      });
+
+      // Limpieza si el usuario cancela sin seleccionar
+      window.addEventListener('focus', function cleanup() {
+        window.removeEventListener('focus', cleanup);
+        setTimeout(() => {
+          if (document.body.contains(inp)) document.body.removeChild(inp);
+        }, 500);
+      }, { once: true });
+
+      inp.click();
+    }
+
+    takePhotoBtn.addEventListener("click", abrirCamara);
 
     clearPhotosBtn.addEventListener("click", () => {
       selectedFiles = [];
