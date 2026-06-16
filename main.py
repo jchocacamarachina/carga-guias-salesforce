@@ -73,15 +73,20 @@ IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "b437ae5a3032b21ed745a4113d29a21
 
 _sf = None
 _sf_lock = threading.Lock()
+_sf_last_ok: float = 0
+_SF_REVALIDATE_SECS = 300  # re-pinguear SF solo cada 5 minutos
 
 
 def get_sf():
     """Devuelve una instancia de Salesforce activa, reconectando si la sesión expiró."""
-    global _sf
+    global _sf, _sf_last_ok
     with _sf_lock:
         if _sf is not None:
+            if time.time() - _sf_last_ok < _SF_REVALIDATE_SECS:
+                return _sf  # sesión reciente, no re-validar
             try:
                 _sf.query("SELECT Id FROM Organization LIMIT 1")
+                _sf_last_ok = time.time()
                 return _sf
             except Exception as e:
                 syslog("WARNING", f"Sesión Salesforce muerta, reconectando... ({e})")
@@ -89,6 +94,7 @@ def get_sf():
 
         try:
             _sf = Salesforce(username=SF_USER, password=SF_PASS, security_token=SF_SECURITY_TOKEN)
+            _sf_last_ok = time.time()
             syslog("INFO", "Salesforce reconectado correctamente", {"user": SF_USER})
             return _sf
         except Exception as e:
@@ -111,16 +117,16 @@ def normalizar_op(numero: str) -> str:
     return f"OP-{numero.zfill(7)}"
 
 
-def sf_get_order_info(op_completa: str) -> dict | None:
-    client = get_sf()
+def sf_get_order_info(op_completa: str, sf_client=None) -> dict | None:
+    client = sf_client or get_sf()
     if not client:
         return None
     query = (
         "SELECT Id, Name, Nombre_del_cliente__c, Link_Guia_de_Entrega__c "
         "FROM Orden_Proveedor__c "
-        f"WHERE Orden_Proveedor_Nro__c = '{op_completa}'"
+        f"WHERE Orden_Proveedor_Nro__c = '{op_completa}' LIMIT 1"
     )
-    result = client.query_all(query)
+    result = client.query(query)
     if result.get("totalSize", 0) == 0:
         return None
     return result["records"][0]
@@ -442,7 +448,7 @@ def get_order_info(number):
 
     op = normalizar_op(number)
     try:
-        info = sf_get_order_info(op)
+        info = sf_get_order_info(op, sf_client=sf_client)
         if not info:
             syslog("WARNING", "get_order_info: orden no encontrada", {"op": op})
             return jsonify({"success": False})

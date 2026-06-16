@@ -363,8 +363,14 @@
     }
 
     async function fetchOrderInfo(rawNumber) {
-      const res = await fetch(`/get_order_info/${encodeURIComponent(rawNumber)}`);
-      return await res.json();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      try {
+        const res = await fetch(`/get_order_info/${encodeURIComponent(rawNumber)}`, { signal: controller.signal });
+        return await res.json();
+      } finally {
+        clearTimeout(timer);
+      }
     }
 
     async function buscarOrdenPrimera() {
