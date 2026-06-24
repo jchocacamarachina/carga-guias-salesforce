@@ -4,3 +4,4 @@ env/
 uploads/
 .env
 *.pyc
+credentials.json

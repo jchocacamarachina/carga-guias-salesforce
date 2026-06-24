@@ -3,75 +3,204 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Registro de Entregas</title>
+  <title>Control de Entregas</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-
 <body class="bg-gray-100 min-h-screen">
 
-  <!-- Encabezado fijo -->
-  <div class="bg-white border-b shadow-sm sticky top-0 z-10">
-    <div class="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-      <div>
-        <p class="font-black text-gray-800">Registro de Entregas</p>
-        <p class="text-xs text-gray-400">{{ total }} entrega{% if total != 1 %}s{% endif %} desde el último reinicio</p>
-      </div>
-      <a href="/ver2026"
-        class="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-black hover:bg-blue-700 transition-colors">
-        Actualizar
-      </a>
+  <div class="bg-white border-b shadow-sm">
+    <div class="max-w-xl mx-auto px-4 py-3 flex items-center justify-between">
+      <p class="font-black text-gray-800">Control de Entregas</p>
+      <span id="sync_dot" class="text-xs text-gray-400">—</span>
     </div>
   </div>
 
-  <!-- Lista de entregas -->
-  <div class="max-w-2xl mx-auto px-4 py-5 space-y-3">
+  <div class="max-w-xl mx-auto px-4 py-5">
 
-    {% if not entries %}
-    <div class="bg-white rounded-xl p-10 text-center text-gray-400 shadow-sm">
-      <p class="text-3xl mb-3">📦</p>
-      <p class="font-bold">Aún no hay entregas registradas.</p>
-      <p class="text-sm mt-1">Aparecerán aquí en cuanto se suban fotos.</p>
+    <!-- Pegar lista -->
+    <div id="input_section" class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+      <p class="font-black text-gray-700 mb-1">Lista de entregas del día</p>
+      <p class="text-xs text-gray-400 mb-3">Pegá los nombres, uno por línea o separados por coma.</p>
+      <textarea id="names_input"
+        placeholder="JUAN CHOCA&#10;EDISON DOMINGUEZ&#10;MARIA LOPEZ"
+        class="w-full border border-gray-200 rounded-xl p-3 text-sm font-mono resize-none h-40 focus:ring-2 focus:ring-blue-500 outline-none"
+      ></textarea>
+      <button onclick="cargarLista()"
+        class="mt-3 bg-blue-600 text-white px-4 py-3 rounded-xl font-black text-sm hover:bg-blue-700 transition-colors w-full">
+        Cargar lista
+      </button>
     </div>
-    {% endif %}
 
-    {% for e in entries %}
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-      <div class="flex items-start justify-between gap-3">
+    <!-- Checklist activo -->
+    <div id="checklist_section" class="hidden space-y-4">
 
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-2 flex-wrap mb-1">
-            <span class="font-black text-gray-800">{{ e.op }}</span>
-            <span class="text-xs text-gray-400 bg-gray-100 rounded-full px-2 py-0.5">
-              {{ e.date }} · {{ e.time }}
-            </span>
-          </div>
-          <p class="text-sm text-gray-500 truncate">{{ e.client }}</p>
+      <!-- Contador + barra -->
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 text-center">
+        <p id="counter_big" class="text-6xl font-black leading-none text-gray-800"></p>
+        <p id="counter_sub" class="text-sm font-bold text-gray-400 mt-2"></p>
+        <div class="mt-4 bg-gray-100 rounded-full h-3 overflow-hidden">
+          <div id="progress_bar"
+            class="bg-green-500 h-3 rounded-full transition-all duration-700"
+            style="width:0%"></div>
         </div>
-
-        <div class="shrink-0 flex flex-col items-end gap-1 foto-links">
-          {{ e.links_html | safe }}
-        </div>
-
       </div>
+
+      <!-- Cards de nombres -->
+      <div id="names_grid" class="grid grid-cols-2 gap-3"></div>
+
+      <button onclick="limpiarLista()"
+        class="w-full text-sm font-bold text-gray-400 hover:text-red-500 py-2 transition-colors">
+        Cambiar lista
+      </button>
+
     </div>
-    {% endfor %}
 
   </div>
 
-  <style>
-    .foto-links a {
-      display: inline-block;
-      background: #2563eb;
-      color: #fff;
-      font-weight: 800;
-      font-size: 12px;
-      padding: 5px 14px;
-      border-radius: 8px;
-      text-decoration: none;
+  <script>
+    let names     = [];
+    let pollTimer = null;
+
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
-    .foto-links a:hover { background: #1d4ed8; }
-    .foto-links br { display: block; margin: 3px 0; content: ""; }
-  </style>
+
+    function norm(n) {
+      return (n || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    }
+
+    function parsePastedNames(text) {
+      const seen = new Set();
+      return text.split(/[\n,;]+/)
+        .map(n => norm(n))
+        .filter(n => {
+          if (!n || seen.has(n)) return false;
+          seen.add(n);
+          return true;
+        });
+    }
+
+    function findMatch(name, map) {
+      if (map[name]) return map[name];
+      for (const [key, val] of Object.entries(map)) {
+        if (key.includes(name) || name.includes(key)) return val;
+      }
+      return null;
+    }
+
+    function hoy() {
+      return new Date().toISOString().slice(0, 10); // "2026-06-24"
+    }
+
+    function cargarLista() {
+      const parsed = parsePastedNames(document.getElementById('names_input').value);
+      if (!parsed.length) return;
+      names = parsed;
+      localStorage.setItem('luis_lista', JSON.stringify({ date: hoy(), names }));
+      document.getElementById('input_section').classList.add('hidden');
+      document.getElementById('checklist_section').classList.remove('hidden');
+      startPolling();
+    }
+
+    function limpiarLista() {
+      stopPolling();
+      document.getElementById('names_input').value = names.join('\n');
+      localStorage.removeItem('luis_lista');
+      names = [];
+      document.getElementById('checklist_section').classList.add('hidden');
+      document.getElementById('input_section').classList.remove('hidden');
+    }
+
+    async function fetchAndUpdate() {
+      try {
+        const res  = await fetch('/api/history');
+        const data = await res.json();
+        renderCards(data);
+        document.getElementById('sync_dot').textContent = 'en vivo ●';
+        document.getElementById('sync_dot').className = 'text-xs text-green-500';
+      } catch {
+        document.getElementById('sync_dot').textContent = 'sin conexión';
+        document.getElementById('sync_dot').className = 'text-xs text-red-400';
+      }
+    }
+
+    function renderCards(history) {
+      // Mapa: nombre normalizado → { time }
+      const map = {};
+      history.forEach(e => {
+        const k = norm(e.client);
+        if (k && !map[k]) map[k] = { time: e.time };
+      });
+
+      let doneCount = 0;
+      const total   = names.length;
+
+      const grid = document.getElementById('names_grid');
+      grid.innerHTML = names.map(name => {
+        const match = findMatch(name, map);
+        if (match) doneCount++;
+
+        return match
+          ? `<div class="bg-green-100 border-2 border-green-400 rounded-2xl p-4 flex flex-col items-center text-center gap-1 transition-all">
+               <span class="text-2xl">✅</span>
+               <span class="font-black text-green-800 text-sm leading-tight">${esc(name)}</span>
+               <span class="text-xs text-green-600 font-bold">${esc(match.time)}</span>
+             </div>`
+          : `<div class="bg-white border-2 border-gray-200 rounded-2xl p-4 flex flex-col items-center text-center gap-1">
+               <span class="text-2xl">⏳</span>
+               <span class="font-bold text-gray-500 text-sm leading-tight">${esc(name)}</span>
+             </div>`;
+      }).join('');
+
+      const pending = total - doneCount;
+      const pct     = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+
+      const bigEl = document.getElementById('counter_big');
+      const subEl = document.getElementById('counter_sub');
+
+      if (doneCount === total && total > 0) {
+        bigEl.textContent  = '✓';
+        bigEl.className    = 'text-5xl font-black leading-none text-green-600';
+        subEl.textContent  = 'Todos entregados';
+      } else {
+        bigEl.textContent  = pending;
+        bigEl.className    = 'text-6xl font-black leading-none text-gray-800';
+        subEl.textContent  = `${doneCount} de ${total} entregados`;
+      }
+
+      document.getElementById('progress_bar').style.width = pct + '%';
+    }
+
+    function startPolling() {
+      fetchAndUpdate();
+      pollTimer = setInterval(fetchAndUpdate, 5000);
+    }
+
+    function stopPolling() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    // Restaurar lista al recargar (solo si es del mismo día)
+    (function () {
+      const saved = localStorage.getItem('luis_lista');
+      if (!saved) return;
+      try {
+        const obj = JSON.parse(saved);
+        if (obj.date !== hoy()) {
+          localStorage.removeItem('luis_lista');
+          return;
+        }
+        if (Array.isArray(obj.names) && obj.names.length) {
+          names = obj.names;
+          document.getElementById('input_section').classList.add('hidden');
+          document.getElementById('checklist_section').classList.remove('hidden');
+          startPolling();
+        }
+      } catch {}
+    })();
+  </script>
 
 </body>
 </html>
