@@ -110,12 +110,6 @@ try:
 except Exception:
     pass
 
-try:
-    init_db()
-    syslog("INFO", "Base de datos inicializada", {"path": DB_PATH})
-except Exception as e:
-    print(f"WARNING: No se pudo inicializar la base de datos: {e}")
-
 
 # ===============================
 # Helpers — Salesforce
@@ -487,6 +481,13 @@ def save_delivery(op: str, client: str, links_html: str, photo_count: int, now_e
         conn.close()
     except Exception as e:
         syslog("ERROR", "Error guardando entrega en DB", {"op": op, "error": str(e)})
+
+
+try:
+    init_db()
+    syslog("INFO", "Base de datos inicializada", {"path": DB_PATH})
+except Exception as e:
+    syslog("CRITICAL", f"No se pudo inicializar la base de datos: {e}", {"path": DB_PATH})
 
 
 # ===============================
