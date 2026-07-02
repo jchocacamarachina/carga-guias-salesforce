@@ -628,8 +628,9 @@ def progress(job_id):
 # Routes — Supervisor
 # ===============================
 @app.route("/ver2026")
-def supervisor_view():
-    return render_template("supervisor.html")
+@app.route("/ver2026/<clave>")
+def supervisor_view(clave=None):
+    return render_template("supervisor.html", admin=(clave == "admin1"))
 
 
 @app.route("/api/history")
@@ -828,8 +829,32 @@ def admin_status():
 # Routes — Historial persistente
 # ===============================
 @app.route("/historial")
-def historial_view():
-    return render_template("historial.html")
+@app.route("/historial/<clave>")
+def historial_view(clave=None):
+    return render_template("historial.html", admin=(clave == "admin1"))
+
+
+@app.route("/api/historial/borrar", methods=["POST"])
+def api_historial_borrar():
+    solo_hoy = request.args.get("solo_hoy") == "1"
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        if solo_hoy:
+            today = datetime.now(_ECUADOR).strftime("%Y-%m-%d")
+            deleted = conn.execute("DELETE FROM deliveries WHERE date_key = ?", (today,)).rowcount
+        else:
+            deleted = conn.execute("DELETE FROM deliveries").rowcount
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        syslog("ERROR", "Error borrando historial", {"error": str(e)})
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    with _history_lock:
+        _history.clear()
+
+    syslog("WARNING", "Historial borrado manualmente", {"solo_hoy": solo_hoy, "filas": deleted})
+    return jsonify({"ok": True, "deleted": deleted})
 
 
 @app.route("/api/historial/data")
