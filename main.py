@@ -628,8 +628,8 @@ def progress(job_id):
 # ===============================
 # Routes — Supervisor
 # ===============================
-@app.route("/ver2026")
-@app.route("/ver2026/<clave>")
+@app.route("/registro")
+@app.route("/registro/<clave>")
 def supervisor_view(clave=None):
     return render_template("supervisor.html", admin=(clave == "admin1"))
 
