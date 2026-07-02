@@ -5,6 +5,7 @@ import time
 import base64
 import threading
 import re
+import sqlite3
 from collections import deque
 from datetime import datetime
 from functools import wraps
@@ -24,7 +25,8 @@ app.secret_key = "clave-camara-china"
 # ===============================
 # Sistema de Logs Interno
 # ===============================
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "sistemas2024")
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN")
+DB_PATH = os.environ.get("DB_PATH", "./entregas.db")
 
 _log_buffer: deque = deque(maxlen=500)
 _log_lock = threading.Lock()
@@ -64,12 +66,12 @@ def require_admin(f):
 # ===============================
 # Salesforce — con reconexión automática
 # ===============================
-SF_USER = os.environ.get("SF_USER", "kdelacruz@camarachina.com")
-SF_PASS = os.environ.get("SF_PASS", "Camara1234")
-SF_SECURITY_TOKEN = os.environ.get("SF_SECURITY_TOKEN", "iCbyXWW5eZn0XUzx3PyZAX3cF")
+SF_USER = os.environ.get("SF_USER")
+SF_PASS = os.environ.get("SF_PASS")
+SF_SECURITY_TOKEN = os.environ.get("SF_SECURITY_TOKEN")
 
-MAKE_WEBHOOK_URL = "https://hook.us2.make.com/ilh879hn49xq3dxxhbihguy2x9vtcjx1"
-IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "b437ae5a3032b21ed745a4113d29a21f")
+MAKE_WEBHOOK_URL = os.environ.get("MAKE_WEBHOOK_URL")
+IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY")
 
 _sf = None
 _sf_lock = threading.Lock()
@@ -107,6 +109,12 @@ try:
     get_sf()
 except Exception:
     pass
+
+try:
+    init_db()
+    syslog("INFO", "Base de datos inicializada", {"path": DB_PATH})
+except Exception as e:
+    print(f"WARNING: No se pudo inicializar la base de datos: {e}")
 
 
 # ===============================
@@ -182,7 +190,7 @@ _history: list = []
 _history_lock = threading.Lock()
 
 
-def add_to_history(op: str, client: str, links_html: str):
+def add_to_history(op: str, client: str, links_html: str, photo_count: int = 0):
     now = datetime.now(_ECUADOR)
     entry = {
         "date": f"{now.day} {_MESES[now.month-1]} {now.year}",
@@ -195,6 +203,7 @@ def add_to_history(op: str, client: str, links_html: str):
         _history.insert(0, entry)
         if len(_history) > 500:
             _history.pop()
+    save_delivery(op, client, links_html, photo_count, now_ec=now)
 
 
 # ===============================
@@ -360,7 +369,7 @@ def worker_upload(job_id: str, order_numbers_raw: list[str], files_payload: list
         push_event(job_id, f"✅ Guardado en Salesforce ({len(orders_info)}).")
 
         for order in results_per_order:
-            add_to_history(order["order_number"], client_name_ref or "", order.get("links_html", ""))
+            add_to_history(order["order_number"], client_name_ref or "", order.get("links_html", ""), photo_count=total_photos)
 
         push_event(job_id, "📡 Notificando a Make...")
 
@@ -415,6 +424,8 @@ from datetime import timezone, timedelta
 
 _ECUADOR = timezone(timedelta(hours=-5))
 _MESES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
+_MESES_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+_DIAS_FULL = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 
 
 def _sf_dt_to_local(dt_str: str):
@@ -429,6 +440,53 @@ def _sf_dt_to_local(dt_str: str):
         return f"{dt.day} {_MESES[dt.month-1]} {dt.year}", dt.strftime("%H:%M")
     except Exception:
         return dt_str[:10], dt_str[11:16]
+
+
+# ===============================
+# Base de datos — historial persistente
+# ===============================
+def init_db():
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS deliveries (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            date_key    TEXT NOT NULL,
+            day_label   TEXT NOT NULL,
+            time_ec     TEXT NOT NULL,
+            op          TEXT NOT NULL,
+            client      TEXT NOT NULL,
+            photo_count INTEGER DEFAULT 0,
+            links_html  TEXT DEFAULT ''
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_date_key ON deliveries(date_key)")
+    conn.commit()
+    conn.close()
+
+
+def save_delivery(op: str, client: str, links_html: str, photo_count: int, now_ec=None):
+    if now_ec is None:
+        now_ec = datetime.now(_ECUADOR)
+    date_key  = now_ec.strftime("%Y-%m-%d")
+    day_label = (
+        f"{_DIAS_FULL[now_ec.weekday()]}, {now_ec.day} "
+        f"de {_MESES_FULL[now_ec.month - 1]} de {now_ec.year}"
+    )
+    time_ec = now_ec.strftime("%H:%M")
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT INTO deliveries (date_key, day_label, time_ec, op, client, photo_count, links_html) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (date_key, day_label, time_ec, op, client, photo_count, links_html),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        syslog("ERROR", "Error guardando entrega en DB", {"op": op, "error": str(e)})
 
 
 # ===============================
@@ -764,6 +822,45 @@ def admin_status():
         "active_jobs": active_jobs,
         "total_jobs_session": total_jobs,
     })
+
+
+# ===============================
+# Routes — Historial persistente
+# ===============================
+@app.route("/historial")
+def historial_view():
+    return render_template("historial.html")
+
+
+@app.route("/api/historial/data")
+def api_historial_data():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT date_key, day_label, time_ec, op, client, photo_count, links_html "
+            "FROM deliveries ORDER BY date_key DESC, id DESC"
+        ).fetchall()
+        conn.close()
+    except Exception as e:
+        syslog("ERROR", "Error leyendo historial DB", {"error": str(e)})
+        return jsonify([])
+
+    days = {}
+    order_keys = []
+    for row in rows:
+        dk = row["date_key"]
+        if dk not in days:
+            days[dk] = {"day_label": row["day_label"], "deliveries": []}
+            order_keys.append(dk)
+        days[dk]["deliveries"].append({
+            "time": row["time_ec"],
+            "op": row["op"],
+            "client": row["client"],
+            "photo_count": row["photo_count"],
+            "links_html": row["links_html"],
+        })
+    return jsonify([days[k] for k in order_keys])
 
 
 if __name__ == "__main__":
