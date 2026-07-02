@@ -11,7 +11,10 @@
   <div class="bg-white border-b shadow-sm">
     <div class="max-w-xl mx-auto px-4 py-3 flex items-center justify-between">
       <p class="font-black text-gray-800">Control de Entregas</p>
-      <span id="sync_dot" class="text-xs text-gray-400">—</span>
+      <div class="text-right">
+        <p id="fecha_hoy" class="text-sm font-bold text-gray-600"></p>
+        <span id="sync_dot" class="text-xs text-gray-400">—</span>
+      </div>
     </div>
   </div>
 
@@ -45,13 +48,20 @@
         </div>
       </div>
 
-      <!-- Cards de nombres -->
-      <div id="names_grid" class="grid grid-cols-2 gap-3"></div>
+      <!-- Lista de nombres -->
+      <div id="names_grid" class="space-y-2"></div>
 
       <button onclick="limpiarLista()"
         class="w-full text-sm font-bold text-gray-400 hover:text-red-500 py-2 transition-colors">
         Cambiar lista
       </button>
+
+      {% if admin %}
+      <button onclick="resetPrueba()"
+        class="w-full text-sm font-bold text-red-400 border border-dashed border-red-300 rounded-xl py-2 hover:bg-red-50 transition-colors">
+        🗑 Borrar lista (prueba)
+      </button>
+      {% endif %}
 
     </div>
 
@@ -60,6 +70,13 @@
   <script>
     let names     = [];
     let pollTimer = null;
+
+    (function mostrarFecha() {
+      const meses = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+      const hoyDate = new Date();
+      document.getElementById('fecha_hoy').textContent =
+        `${hoyDate.getDate()} de ${meses[hoyDate.getMonth()]} de ${hoyDate.getFullYear()}`;
+    })();
 
     function esc(s) {
       return String(s)
@@ -131,7 +148,7 @@
       const map = {};
       history.forEach(e => {
         const k = norm(e.client);
-        if (k && !map[k]) map[k] = { time: e.time };
+        if (k && !map[k]) map[k] = { time: e.time, date: e.date };
       });
 
       let doneCount = 0;
@@ -143,14 +160,16 @@
         if (match) doneCount++;
 
         return match
-          ? `<div class="bg-green-100 border-2 border-green-400 rounded-2xl p-4 flex flex-col items-center text-center gap-1 transition-all">
-               <span class="text-2xl">✅</span>
-               <span class="font-black text-green-800 text-sm leading-tight">${esc(name)}</span>
-               <span class="text-xs text-green-600 font-bold">${esc(match.time)}</span>
+          ? `<div class="bg-green-50 border border-green-300 rounded-xl px-4 py-3 flex items-center gap-3">
+               <span class="text-xl shrink-0">✅</span>
+               <div class="flex-1 min-w-0">
+                 <p class="font-bold text-green-800 text-sm truncate">${esc(name)}</p>
+                 <p class="text-xs text-green-600 mt-0.5">${esc(match.time)}</p>
+               </div>
              </div>`
-          : `<div class="bg-white border-2 border-gray-200 rounded-2xl p-4 flex flex-col items-center text-center gap-1">
-               <span class="text-2xl">⏳</span>
-               <span class="font-bold text-gray-500 text-sm leading-tight">${esc(name)}</span>
+          : `<div class="bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center gap-3">
+               <span class="text-xl shrink-0">⏳</span>
+               <p class="font-bold text-gray-500 text-sm truncate flex-1">${esc(name)}</p>
              </div>`;
       }).join('');
 
@@ -171,6 +190,16 @@
       }
 
       document.getElementById('progress_bar').style.width = pct + '%';
+    }
+
+    function resetPrueba() {
+      if (!confirm('¿Limpiar la lista del supervisor?')) return;
+      stopPolling();
+      localStorage.removeItem('luis_lista');
+      names = [];
+      document.getElementById('names_input').value = '';
+      document.getElementById('checklist_section').classList.add('hidden');
+      document.getElementById('input_section').classList.remove('hidden');
     }
 
     function startPolling() {
