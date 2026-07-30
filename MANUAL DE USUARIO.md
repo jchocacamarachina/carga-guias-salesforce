@@ -11,6 +11,21 @@
 
 Esta app te permite **tomar fotos como prueba de una entrega** y guardarlas automáticamente en el sistema. Solo necesitas el número de orden (OP) y la cámara de tu celular.
 
+**Lo más importante que tienes que saber:** la app está hecha para funcionar **sin señal**. Las fotos se guardan en tu teléfono al instante y se suben solas cuando vuelve la cobertura. No necesitas esperar con la app abierta.
+
+---
+
+## PARTE 0: INSTALAR LA APP EN EL CELULAR (recomendado)
+
+No es obligatorio, pero conviene: la app queda como un ícono más en tu pantalla y funciona mejor sin señal.
+
+1. Abre la dirección de la app en **Chrome**.
+2. Toca el menú de Chrome (los tres puntitos, arriba a la derecha).
+3. Elige **"Agregar a pantalla principal"** o **"Instalar aplicación"**.
+4. Confirma. Aparecerá un ícono azul con una cámara.
+
+A partir de ahí abrís la app desde ese ícono, como cualquier otra.
+
 ---
 
 ## PARTE 1: CÓMO REGISTRAR UNA ENTREGA
@@ -28,6 +43,8 @@ Esta app te permite **tomar fotos como prueba de una entrega** y guardarlas auto
 
 > **Tip:** También puedes presionar la tecla **Enter** en lugar de tocar "Buscar".
 
+> **Atención:** si la orden ya tenía fotos cargadas antes, verás el aviso **"⚠️ Ya tiene guía de entrega (se sobreescribirá)"**. Si subes fotos nuevas, las anteriores se reemplazan.
+
 ---
 
 ### Paso 2 — (Opcional) Agregar más órdenes del mismo cliente
@@ -41,6 +58,8 @@ Si el cliente tiene **más de una orden** que entregar al mismo tiempo, puedes a
 **Importante:** Todas las órdenes deben ser del **mismo cliente**. Si intentas agregar una orden de otro cliente, la app te mostrará un error.
 
 Para quitar una orden de la lista, toca el botón rojo **"Quitar"** que aparece al lado de cada una.
+
+> **Ojo:** si vuelves a usar el buscador de arriba (el del Paso 1), la app entiende que estás empezando una entrega **nueva** y descarta las fotos que tenías tomadas. Para agregar órdenes usa siempre "+ Agregar otra OP".
 
 ---
 
@@ -58,6 +77,8 @@ Para quitar una orden de la lista, toca el botón rojo **"Quitar"** que aparece 
 
 > **Nota:** El botón "TOMAR FOTO" solo se activa después de encontrar una orden. Si está gris, primero busca la orden.
 
+> **Cada foto se guarda en el teléfono al momento de tomarla.** Si se cierra la app, se apaga el celular o se corta la llamada, al volver a abrir la app las fotos siguen ahí junto con la orden. No hay que empezar de nuevo.
+
 ---
 
 ### Paso 4 — Subir las Fotos
@@ -65,88 +86,132 @@ Para quitar una orden de la lista, toca el botón rojo **"Quitar"** que aparece 
 Cuando ya tienes la orden y las fotos listas:
 
 1. Toca el botón verde grande que dice **"SUBIR FOTOS"**.
-2. Espera. Verás mensajes que indican el progreso:
-   - 🔎 *Verificando órdenes...* — Está confirmando el número de orden.
-   - ✅ *Órdenes verificadas* — Todo correcto.
-   - ⬆️ *Subiendo fotos (1/2)...* — Está enviando las fotos.
-   - 🧾 *Guardando en Salesforce...* — Está registrando en el sistema.
-   - ✅ *Guardado en Salesforce* — ¡Listo!
-3. Cuando termina, aparece una **pantalla verde grande** con un ✓ y el mensaje **"¡Fotos guardadas!"**.
+2. Aparece un mensaje arriba: **"📥 En cola — se sube solo cuando haya señal."**
+3. El formulario se limpia de inmediato y **ya puedes registrar la siguiente entrega**.
 
-> **No cierres la app mientras ves los mensajes de progreso.**
+**No hay que esperar.** La entrega queda en la lista de abajo, **"Cola de subidas"**, y la app la manda al sistema por su cuenta en cuanto haya internet — incluso si cerraste la app o la pantalla está apagada.
 
 ---
 
-### Paso 5 — Nueva entrega
+### Paso 5 — Revisar la Cola de subidas
 
-Después de que aparece la pantalla verde de éxito, tienes dos opciones:
-- Tocar el botón **"Nueva entrega"** para registrar otra entrega.
-- Esperar 6 segundos: la app se reinicia sola automáticamente.
+Abajo de todo hay una lista con las entregas que ya mandaste. Cada una muestra las OP, cuántas fotos tiene y en qué estado está:
+
+| Estado | Qué significa | Qué hacer |
+|---|---|---|
+| 🕓 **Pendiente** | Está esperando señal para subir | Nada. Sube sola |
+| ⬆️ **Subiendo** | Se está enviando en este momento | Nada. Esperar |
+| ✅ **Listo** | Guardado en el sistema, con las fotos y el link al cliente | Nada. Podés cerrarla con la **✕** |
+| ❌ **Error** | Algo salió mal y no se va a arreglar solo | Leer el mensaje (ver Parte 2) |
+
+**Cuando aparece ❌ Error** tienes dos botones:
+- **"Reintentar"** — vuelve a intentar la subida sin perder las fotos. Úsalo cuando el problema ya se corrigió (por ejemplo, se creó la orden en el sistema).
+- **"✕"** — descarta la entrega y **borra sus fotos**. Solo si ya no la necesitas.
+
+> Las entregas ✅ Listo se borran solas de la lista después de unos días. No hace falta limpiarlas a mano.
 
 ---
 
 ## PARTE 2: ERRORES COMUNES Y SOLUCIONES
 
+### Al buscar la orden
+
 | Mensaje que ves | Qué significa | Qué hacer |
 |---|---|---|
 | ❌ Orden no encontrada | El número de orden no existe en el sistema | Verifica que el número esté bien escrito |
+| ⚠️ Error consultando la orden | No hay internet, o el sistema no responde | Espera un momento y vuelve a tocar "Buscar" |
 | "Esa OP ya está agregada" | Intentaste agregar una orden que ya está en la lista | No es necesario agregarla de nuevo |
 | "Esa OP es de otro cliente" | Las órdenes son de clientes distintos | Sube cada cliente por separado |
-| "Archivo no permitido (solo fotos)" | Intentaste subir un archivo que no es imagen | Solo se aceptan fotos |
-| "Debes seleccionar al menos 1 foto" | Tocaste "Subir fotos" sin tomar ninguna foto | Toma al menos una foto primero |
+| "Esa orden no tiene cliente asignado" | A la orden le falta el nombre del cliente en el sistema | Avisa a la oficina para que lo completen |
+
+### En la Cola de subidas (❌ Error)
+
+| Mensaje que ves | Qué significa | Qué hacer |
+|---|---|---|
+| "Orden no encontrada en Salesforce: OP-…" | La orden dejó de existir o cambió de número | Avisa a la oficina. Cuando esté creada, toca **"Reintentar"** |
+| "Las órdenes no pertenecen al mismo cliente" | Se juntaron OP de clientes distintos | Descarta con **✕** y sube cada cliente por separado |
+| "La orden … no tiene cliente asignado" | Falta el nombre del cliente en el sistema | Avisa a la oficina y luego **"Reintentar"** |
+| "Las fotos superan el límite de … MB" | Son demasiadas fotos en una sola entrega | Descarta y sube la entrega en dos partes |
+| "Interrumpido: el servidor se reinició…" | Se cortó la subida por el lado del sistema | Toca **"Reintentar"** |
+| "Archivo no permitido (solo fotos)" | Se intentó enviar algo que no es una imagen | Descarta y toma la foto de nuevo |
+
+> Si el estado se queda en **🕓 Pendiente** mucho tiempo, es que no hay señal suficiente. No pasa nada: en cuanto haya cobertura sube solo. Podés ayudar abriendo la app un momento con señal.
 
 ---
 
-## PARTE 3: VER EL HISTORIAL DE ENTREGAS (Para Supervisores)
+## PARTE 3: PARA SUPERVISORES
 
-### Cómo acceder
+Hay dos pantallas distintas. Ambas se abren agregando algo al final de la dirección de la app.
 
-Abre en el navegador la dirección de la app y agrega **/registro** al final.
+### A) Checklist del día — `/registro`
 
-Por ejemplo, si la app está en:
-```
-http://mi-app.com/
-```
-El historial está en:
-```
-http://mi-app.com/registro
-```
+Sirve para seguir en vivo qué clientes de la ruta de hoy ya recibieron su entrega.
 
-### Qué muestra el historial
+1. Abre la dirección de la app con **/registro** al final.
+2. En el cuadro grande, **pega la lista de clientes del día** (uno por línea, o separados por coma).
+3. Toca **"Cargar lista"**.
 
-Cada entrega registrada aparece como una tarjeta con:
-- **Número de orden** (OP-XXXXXXX) en negritas.
-- **Fecha y hora** de cuando se subieron las fotos.
-- **Nombre del cliente**.
-- **Botones de foto** (Foto 1, Foto 2, etc.) — toca cualquiera para ver la imagen.
+A partir de ahí la pantalla se actualiza sola cada pocos segundos:
+- **⏳ Nombre en blanco** — todavía no entregado.
+- **✅ Nombre en verde con la hora** — ya entregado.
+- Arriba se ve el número grande de **cuántos faltan** y una barra de progreso.
+- Cuando terminan todos, el número se convierte en un **✓** y dice "Todos entregados".
 
-### Cómo actualizar
+Arriba a la derecha dice **"en vivo ●"** en verde si está conectado, o **"sin conexión"** en rojo.
 
-Toca el botón **"Actualizar"** en la parte de arriba para ver las entregas más recientes.
+**Notas importantes:**
+- La lista se guarda en ese navegador: si recargás la página, sigue ahí.
+- El checklist muestra **solo las entregas de hoy**. Si dejaste la lista cargada de un día anterior, aparece el aviso **"lista de otro día — volvé a cargarla"** y hay que cargarla de nuevo.
+- Para cambiar la lista, toca **"Cambiar lista"** abajo.
+- Los nombres se comparan sin distinguir mayúsculas ni acentos. Para que el cruce funcione, escribí **nombre y apellido** — con un solo nombre suelto la app no marca nada, a propósito, para no dar por entregado al cliente equivocado.
 
-> **Importante:** El historial se reinicia cada vez que el servidor se reinicia. Solo muestra las entregas registradas desde el último reinicio.
+### B) Historial completo — `/historial`
+
+Sirve para consultar entregas de días anteriores.
+
+1. Abre la dirección de la app con **/historial** al final.
+2. Verás las entregas agrupadas por día, de la más reciente a la más antigua.
+
+Cada entrega muestra la hora, el nombre del cliente, el número de OP y cuántas fotos tiene. Arriba a la derecha, el botón **"Actualizar"** trae lo último; igual se refresca solo cada minuto.
+
+**El historial es permanente:** no se borra cuando el sistema se reinicia.
+
+### C) Botones de borrado (solo administrador)
+
+Los botones para borrar historial están escondidos y protegidos con una clave. Se accede abriendo `/historial/LA_CLAVE` (o `/registro/LA_CLAVE` para el checklist), donde `LA_CLAVE` la define quien administra el sistema.
+
+Sin esa clave los botones no aparecen y el borrado queda bloqueado. Si no la tenés, pedila al administrador — no está escrita en este manual a propósito.
 
 ---
 
 ## PARTE 4: PREGUNTAS FRECUENTES
 
+**¿Las fotos quedan guardadas si cierro la app antes de subirlas?**
+Sí. Cada foto se guarda en el teléfono en el momento de tomarla. Al volver a abrir la app, la orden y las fotos siguen ahí.
+
+**¿Qué pasa si no tengo señal cuando toco "SUBIR FOTOS"?**
+Nada malo. La entrega queda en 🕓 Pendiente y se sube sola cuando aparezca la cobertura, aunque tengas la app cerrada.
+
+**¿Tengo que esperar a que diga ✅ Listo antes de seguir?**
+No. Podés registrar la siguiente entrega de inmediato. La cola maneja varias entregas a la vez.
+
+**¿Se pueden subir dos veces las mismas fotos por error?**
+No. El sistema reconoce cada entrega y, si el envío se repite, no duplica las fotos.
+
 **¿Cuántas fotos puedo subir por entrega?**
-No hay un límite fijo. Puedes tomar las fotos que necesites.
+No hay un número fijo, pero hay un límite de peso total. Si te avisa que superás el límite, dividí la entrega en dos.
 
 **¿Puedo usar la app desde mi celular?**
-Sí. La app está diseñada para funcionar en celulares. Al tocar "TOMAR FOTO", se abre directamente la cámara trasera.
+Sí, está diseñada para eso. Al tocar "TOMAR FOTO" se abre directamente la cámara trasera.
 
-**¿Las fotos quedan guardadas si cierro la app antes de subirlas?**
-No. Si cierras la app o el navegador antes de tocar "SUBIR FOTOS", las fotos se pierden. Deberás tomarlas de nuevo.
-
-**¿Qué pasa si la conexión a internet se corta mientras subo?**
-Verás un mensaje de error en el área de progreso. Intenta de nuevo cuando tengas conexión estable.
-
-**¿Puedo agregar más fotos después de ya haberlas subido?**
-No directamente. Si necesitas agregar fotos a una orden que ya fue registrada, la app mostrará una advertencia de que ya tiene guía de entrega. Si subes de nuevo, las fotos anteriores serán reemplazadas.
+**¿Puedo agregar más fotos a una orden que ya subí?**
+No directamente. Si volvés a subir fotos a la misma orden, las anteriores se reemplazan (la app te avisa con "⚠️ Ya tiene guía de entrega").
 
 **¿Dónde quedan guardadas las fotos?**
-Las fotos se guardan automáticamente en Salesforce y también se genera un enlace público para compartir con el cliente.
+En Salesforce, vinculadas a la orden, y además se genera un enlace público para compartir con el cliente.
+
+**Se me borró la lista del checklist, ¿por qué?**
+Porque era de un día anterior. El checklist trabaja siempre con las entregas del día en curso.
 
 ---
 
@@ -155,10 +220,12 @@ Las fotos se guardan automáticamente en Salesforce y también se genera un enla
 ```
 1. Escribe el número de la orden → toca "Buscar"
 2. ✅ Aparece el nombre de la orden → continúa
-3. Toca "TOMAR FOTO" → toma las fotos necesarias
-4. Toca "SUBIR FOTOS" → espera los mensajes de progreso
-5. ✓ Pantalla verde = entrega registrada con éxito
-6. Toca "Nueva entrega" para continuar con la siguiente
+3. (Opcional) "+ Agregar otra OP" si el cliente tiene varias
+4. Toca "TOMAR FOTO" → toma las fotos necesarias
+5. Toca "SUBIR FOTOS" → dice "📥 En cola"
+6. Seguí con la próxima entrega. Sube sola.
+7. Revisá la "Cola de subidas": ✅ Listo = terminado
+   ❌ Error = leer el mensaje y tocar "Reintentar"
 ```
 
 ---
