@@ -5,3 +5,14 @@ uploads/
 .env
 *.pyc
 credentials.json
+
+# Base de datos del historial. Con WAL, SQLite crea además los -wal/-shm.
+*.db
+*.db-wal
+*.db-shm
+
+# Configuración local de Claude Code
+.claude/
+
+# Tests
+.pytest_cache/
