@@ -1,28 +1,18 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Carga de Guías</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
+{% extends "base.html" %}
 
-<body class="bg-slate-100 min-h-screen flex items-center justify-center p-4">
+{% block title %}Carga de Guías{% endblock %}
+{% block body_class %}bg-slate-100 min-h-screen flex items-center justify-center p-4{% endblock %}
 
-  <!-- Pantalla de éxito -->
-  <div id="success_overlay" class="hidden fixed inset-0 bg-green-600 z-50 flex flex-col items-center justify-center p-8 text-center">
-    <div class="text-white">
-      <div class="text-9xl mb-2 leading-none">✓</div>
-      <h2 class="text-3xl font-black mb-3">¡Fotos guardadas!</h2>
-      <p id="success_ops" class="text-green-100 text-base font-bold mb-2"></p>
-      <p class="text-green-200 text-sm mb-8">Las fotos quedaron registradas en el sistema.</p>
-      <button onclick="dismissSuccess()"
-        class="bg-white text-green-700 font-black text-lg px-10 py-4 rounded-2xl shadow-lg active:scale-95 transition-transform">
-        Nueva entrega
-      </button>
-      <p id="success_countdown" class="text-green-300 text-xs mt-5"></p>
-    </div>
-  </div>
+{% block head %}
+  {# Solo esta pantalla es instalable como app: el manifest va acá, no en base.html. #}
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/static/img/icon.svg" />
+{% endblock %}
+
+{% block content %}
+
+  <!-- Toast -->
+  <div id="toast" class="hidden fixed top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-sm font-bold px-5 py-3 rounded-xl shadow-lg z-50 transition-opacity"></div>
 
   <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-xl border-t-8 border-blue-600">
     <h1 class="text-xl font-black text-center text-gray-800 mb-6 uppercase tracking-wider">
@@ -100,9 +90,7 @@
       <hr class="border-gray-100" />
 
       <!-- Paso 2 + 3 -->
-      <form id="upload_form" class="space-y-6 opacity-30 pointer-events-none transition-opacity duration-500">
-        <input type="hidden" name="order_numbers_json" id="hidden_orders_json" />
-
+      <div id="upload_form" class="space-y-6 opacity-30 pointer-events-none transition-opacity duration-500">
         <!-- Captura por cámara -->
         <div>
           <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Paso 2: Tomar Fotos</label>
@@ -120,11 +108,8 @@
           </div>
 
           <p class="text-xs text-gray-500 mt-2">
-            Se abre la cámara y cada foto tomada se agrega a la cola. Puedes borrar antes de subir.
+            Cada foto se guarda de inmediato en este teléfono, aunque se cierre la app antes de subir.
           </p>
-
-          <input type="file" id="camera_input" accept="image/*" capture="environment"
-            style="position:fixed;top:-200px;left:-200px;width:1px;height:1px;opacity:0;" />
         </div>
 
         <!-- Preview -->
@@ -140,24 +125,30 @@
           class="w-full bg-green-600 text-white py-4 rounded-xl font-black text-lg shadow-lg hover:bg-green-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
           SUBIR FOTOS
         </button>
+      </div>
 
-        <!-- Estado -->
-        <div class="bg-slate-50 border rounded-xl p-4">
-          <div class="flex items-center justify-between mb-2">
-            <p class="font-black text-gray-700">Estado</p>
-            <button id="clear_log" type="button" class="text-xs font-bold text-blue-600 hover:underline">Limpiar</button>
-          </div>
-          <div id="status_log" class="text-sm text-gray-700 space-y-1 max-h-56 overflow-auto"></div>
-        </div>
-      </form>
+      <hr class="border-gray-100" />
+
+      <!-- Cola de subidas -->
+      <div>
+        <p class="text-xs font-bold text-gray-500 uppercase mb-2">Cola de subidas</p>
+        <div id="queue_list" class="space-y-2"></div>
+        <p id="queue_empty" class="text-sm text-gray-500 bg-gray-50 border border-dashed rounded-lg p-3">
+          Aún no hay subidas en cola.
+        </p>
+      </div>
     </div>
   </div>
 
+{% endblock %}
+
+{% block scripts %}
+  <script src="/static/js/idb-queue.js"></script>
+  <script src="/static/js/compress.js"></script>
   <script>
     const input          = document.getElementById('order_number_input');
     const display        = document.getElementById('op_name_display');
     const form           = document.getElementById('upload_form');
-    const hiddenOrdersJson = document.getElementById('hidden_orders_json');
     const addOrderBtn    = document.getElementById('add_order_btn');
     const addOrderRow    = document.getElementById('add_order_row');
     const addOrderInput  = document.getElementById('add_order_input');
@@ -166,31 +157,34 @@
     const addOrderError  = document.getElementById('add_order_error');
     const ordersList     = document.getElementById('orders_list');
     const clientHint     = document.getElementById('client_hint');
-    const cameraInput    = document.getElementById('camera_input');
     const takePhotoBtn   = document.getElementById('take_photo_btn');
     const clearPhotosBtn = document.getElementById('clear_photos_btn');
     const previewGrid    = document.getElementById('preview_grid');
     const emptyPreview   = document.getElementById('empty_preview');
     const submitBtn      = document.getElementById('submit_btn');
-    const statusLog      = document.getElementById('status_log');
-    const clearLogBtn    = document.getElementById('clear_log');
+    const toast          = document.getElementById('toast');
+    const queueList       = document.getElementById('queue_list');
+    const queueEmpty      = document.getElementById('queue_empty');
 
-    let selectedFiles  = [];
-    let sse            = null;
     let selectedOrders = []; // [{raw, op, name, client_name, has_delivery_url}]
     let clientNameRef  = null;
+    let draftPhotoCount = 0;
 
     // ====== Utilidades ======
     function soloDigitos(val) {
       return val.replace(/[^0-9]/g, '').trim();
     }
 
+    function showToast(msg, ms = 3000) {
+      toast.textContent = msg;
+      toast.classList.remove('hidden');
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => toast.classList.add('hidden'), ms);
+    }
+
     function bloquearForm() {
       form.classList.add('opacity-30', 'pointer-events-none');
       submitBtn.disabled = true;
-      selectedFiles = [];
-      renderPreview();
-      resetCompactLog();
     }
 
     function habilitarForm() {
@@ -198,99 +192,20 @@
       updateSubmitState();
     }
 
-    function resetAll() {
-      sessionStorage.removeItem('cc_orders');
-      sessionStorage.removeItem('cc_client');
+    async function resetAll() {
       selectedOrders = [];
       clientNameRef  = null;
-      hiddenOrdersJson.value = "";
       input.value    = "";
       display.classList.add("hidden");
       display.innerText = "";
       addOrderRow.classList.add("hidden");
       addOrderInput.value = "";
       addOrderError.classList.add("hidden");
-      selectedFiles  = [];
-      renderPreview();
+      await UploadQueue.clearDraft();
+      await renderPreviewFromDraft();
       renderOrders();
       bloquearForm();
-      resetCompactLog();
     }
-
-    // ====== Logger compacto (máx 4 pasos) ======
-    const steps = {
-      start:  { order: 1 },
-      upload: { order: 2 },
-      sf:     { order: 3 },
-      done:   { order: 4 }
-    };
-    const stepState = { start: null, upload: null, sf: null, done: null };
-
-    function resetCompactLog() {
-      stepState.start = stepState.upload = stepState.sf = stepState.done = null;
-      renderCompactLog();
-    }
-
-    function setStep(key, text, kind = "info") {
-      if (!steps[key]) return;
-      stepState[key] = { text, kind };
-      renderCompactLog();
-    }
-
-    function renderCompactLog() {
-      statusLog.innerHTML = "";
-      Object.keys(steps).sort((a, b) => steps[a].order - steps[b].order).forEach(k => {
-        const item = stepState[k];
-        if (!item) return;
-        const el = document.createElement("div");
-        el.className = "leading-snug";
-        if (item.kind === "error") el.classList.add("text-red-700", "font-bold");
-        if (item.kind === "warn")  el.classList.add("text-amber-700", "font-bold");
-        if (item.kind === "done")  el.classList.add("text-green-700", "font-bold");
-        el.textContent = item.text;
-        statusLog.appendChild(el);
-      });
-    }
-
-    function handleBackendMsg(msg, kind = "info") {
-      const raw = (msg || "").trim();
-      const m   = raw.toLowerCase();
-
-      if (m.includes("verificando") && m.includes("salesforce")) {
-        setStep("start", "🔎 Verificando órdenes...");
-        return;
-      }
-      if (m.includes("órdenes verificadas")) {
-        setStep("start", raw, "done");
-        return;
-      }
-      if (m.includes("orden no encontrada") || m.includes("no pertenecen al mismo cliente")) {
-        setStep("done", "❌ Revisa las órdenes.", "error");
-        return;
-      }
-      if (m.includes("subiendo")) {
-        const match = raw.match(/subiendo\s+(\d+)\/(\d+)/i);
-        if (match) setStep("upload", `⬆️ Subiendo fotos (${match[1]}/${match[2]})...`);
-        else       setStep("upload", "⬆️ Subiendo fotos...");
-        return;
-      }
-      if (m.includes("guardando link en salesforce")) {
-        setStep("sf", "🧾 Guardando en Salesforce...");
-        return;
-      }
-      if (m.includes("guardado en salesforce")) {
-        setStep("sf", raw, "done");
-        return;
-      }
-      if (m.includes("make no respondió") || m.includes("no se pudo hacer público")) return;
-
-      if (kind === "error" || m.startsWith("⚠️ error") || m.startsWith("error")) {
-        setStep("done", "❌ Ocurrió un error.", "error");
-        return;
-      }
-    }
-
-    clearLogBtn.addEventListener("click", () => resetCompactLog());
 
     // ====== Órdenes UI ======
     function renderOrders() {
@@ -318,8 +233,8 @@
         const left = document.createElement("div");
         left.className = "min-w-0";
         left.innerHTML = `
-          <div class="text-sm font-black text-gray-800 truncate">${o.op}</div>
-          <div class="text-xs text-gray-500 font-bold truncate">${o.name || ""}</div>
+          <div class="text-sm font-black text-gray-800 truncate">${esc(o.op)}</div>
+          <div class="text-xs text-gray-500 font-bold truncate">${esc(o.name)}</div>
         `;
 
         if (o.has_delivery_url) {
@@ -333,16 +248,17 @@
         btn.type = "button";
         btn.className = "ml-3 shrink-0 text-xs font-black text-red-600 hover:underline";
         btn.textContent = "Quitar";
-        btn.onclick = () => {
+        btn.onclick = async () => {
           selectedOrders.splice(idx, 1);
           if (!selectedOrders.length) {
             clientNameRef = null;
-            hiddenOrdersJson.value = "";
             addOrderRow.classList.add("hidden");
+            await UploadQueue.clearDraft();
+            await renderPreviewFromDraft();
             bloquearForm();
           } else {
             clientNameRef = selectedOrders[0].client_name;
-            syncHiddenOrders();
+            await UploadQueue.updateDraftOrders(selectedOrders);
             habilitarForm();
           }
           renderOrders();
@@ -354,12 +270,6 @@
         card.appendChild(row);
         ordersList.appendChild(card);
       });
-
-      syncHiddenOrders();
-    }
-
-    function syncHiddenOrders() {
-      hiddenOrdersJson.value = JSON.stringify(selectedOrders.map(o => o.raw));
     }
 
     async function fetchOrderInfo(rawNumber) {
@@ -381,7 +291,11 @@
       display.innerText = "🔍 Buscando...";
       display.style.color = "#4b5563";
 
+      // Buscar una "primera" OP siempre arranca una entrega nueva: descarta cualquier
+      // borrador (fotos) que hubiera quedado de una entrega anterior sin subir.
       bloquearForm();
+      await UploadQueue.clearDraft();
+      await renderPreviewFromDraft();
 
       try {
         const data = await fetchOrderInfo(num);
@@ -390,7 +304,7 @@
           display.innerText = "❌ Orden no encontrada";
           display.style.color = "#dc2626";
           selectedOrders = [];
-          clientNameRef  = null;
+          clientNameRef = null;
           renderOrders();
           return;
         }
@@ -409,12 +323,11 @@
 
         renderOrders();
         habilitarForm();
-        resetCompactLog();
       } catch {
         display.innerText = "⚠️ Error consultando la orden";
         display.style.color = "#dc2626";
         selectedOrders = [];
-        clientNameRef  = null;
+        clientNameRef = null;
         renderOrders();
       }
     }
@@ -487,6 +400,7 @@
         addOrderError.classList.add("hidden");
         renderOrders();
         updateSubmitState();
+        await UploadQueue.updateDraftOrders(selectedOrders);
       } catch {
         addOrderError.textContent = "Error consultando la orden.";
         addOrderError.classList.remove("hidden");
@@ -506,19 +420,34 @@
       }
     });
 
-    // ====== Fotos ======
+    // ====== Fotos (guardadas de inmediato en IndexedDB) ======
     function updateSubmitState() {
       const okOrders = selectedOrders.length > 0;
-      const okFiles  = selectedFiles.length > 0;
-      submitBtn.disabled    = !(okOrders && okFiles);
+      const okFiles  = draftPhotoCount > 0;
+      submitBtn.disabled      = !(okOrders && okFiles);
       clearPhotosBtn.disabled = !(okOrders && okFiles);
-      takePhotoBtn.disabled = !okOrders;
+      takePhotoBtn.disabled   = !okOrders;
     }
 
-    function renderPreview() {
+    // URLs de blob del preview. Hay que revocarlas a mano: cada render creaba
+    // objectURLs nuevos sin liberar los anteriores y la memoria del teléfono crecía
+    // con cada foto tomada.
+    let previewUrls = [];
+
+    function revokePreviewUrls() {
+      previewUrls.forEach((u) => URL.revokeObjectURL(u));
+      previewUrls = [];
+    }
+
+    async function renderPreviewFromDraft() {
+      const draft = await UploadQueue.getDraftJob();
+      const photos = draft ? draft.photos : [];
+      draftPhotoCount = photos.length;
+
+      revokePreviewUrls();
       previewGrid.innerHTML = "";
 
-      if (!selectedFiles.length) {
+      if (!photos.length) {
         emptyPreview.classList.remove("hidden");
         previewGrid.classList.add("hidden");
         updateSubmitState();
@@ -528,24 +457,29 @@
       emptyPreview.classList.add("hidden");
       previewGrid.classList.remove("hidden");
 
-      selectedFiles.forEach((file, idx) => {
+      photos.forEach((photo) => {
         const card = document.createElement("div");
         card.className = "relative rounded-xl overflow-hidden border bg-white shadow-sm";
 
         const img = document.createElement("img");
         img.className = "w-full h-28 object-cover";
-        img.src = URL.createObjectURL(file);
+        const url = URL.createObjectURL(photo.blob);
+        previewUrls.push(url);
+        img.src = url;
 
         const footer = document.createElement("div");
         footer.className = "p-2 text-xs text-gray-600 font-bold truncate";
-        footer.title = file.name;
-        footer.textContent = file.name;
+        footer.title = photo.name;
+        footer.textContent = photo.name;
 
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "absolute top-2 right-2 bg-black/70 text-white w-7 h-7 rounded-full font-black hover:bg-black";
         btn.textContent = "×";
-        btn.onclick = () => { selectedFiles.splice(idx, 1); renderPreview(); };
+        btn.onclick = async () => {
+          await UploadQueue.removePhotoFromDraft(photo.id);
+          renderPreviewFromDraft();
+        };
 
         card.appendChild(img);
         card.appendChild(btn);
@@ -558,8 +492,6 @@
 
     function abrirCamara() {
       if (!selectedOrders.length) return;
-      sessionStorage.setItem('cc_orders', JSON.stringify(selectedOrders));
-      sessionStorage.setItem('cc_client', clientNameRef || '');
 
       // Crear un input nuevo cada vez; reusar el mismo con display:none
       // hace que el evento change no dispare en muchos Android.
@@ -570,15 +502,23 @@
       inp.style.cssText = 'position:fixed;top:-200px;left:-200px;width:1px;height:1px;opacity:0;';
       document.body.appendChild(inp);
 
-      inp.addEventListener('change', () => {
+      inp.addEventListener('change', async () => {
         const file = inp.files?.[0];
         if (document.body.contains(inp)) document.body.removeChild(inp);
         if (!file || !(file.type || '').startsWith('image/')) return;
+
         const ext   = (file.name.split('.').pop() || 'jpg').toLowerCase();
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const renamed = new File([file], `foto_${stamp}.${ext}`, { type: file.type, lastModified: Date.now() });
-        selectedFiles.push(renamed);
-        renderPreview();
+        const finalName = `foto_${stamp}.${ext}`;
+
+        takePhotoBtn.disabled = true;
+        try {
+          const compressed = await compressImage(file);
+          await UploadQueue.addPhotoToDraft(selectedOrders, compressed, finalName);
+          await renderPreviewFromDraft();
+        } finally {
+          takePhotoBtn.disabled = !selectedOrders.length;
+        }
       });
 
       // Limpieza si el usuario cancela sin seleccionar
@@ -594,118 +534,179 @@
 
     takePhotoBtn.addEventListener("click", abrirCamara);
 
-    clearPhotosBtn.addEventListener("click", () => {
-      selectedFiles = [];
-      renderPreview();
-      resetCompactLog();
+    clearPhotosBtn.addEventListener("click", async () => {
+      await UploadQueue.clearDraft();
+      await renderPreviewFromDraft();
     });
 
-    // ====== Submit ======
+    // ====== Submit: encolar y dejar que el Service Worker suba en segundo plano ======
+    async function nudgeServiceWorker() {
+      if (!('serviceWorker' in navigator)) return;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        if ('sync' in reg) {
+          await reg.sync.register('upload-queue');
+        } else if (reg.active) {
+          reg.active.postMessage({ type: 'try-upload' });
+        }
+      } catch (e) {
+        // Background Sync no disponible (poco probable en Chrome/Android): intento inmediato de todos modos
+        const reg = await navigator.serviceWorker.getRegistration();
+        reg?.active?.postMessage({ type: 'try-upload' });
+      }
+    }
+
     submitBtn.addEventListener("click", async () => {
       if (submitBtn.disabled) return;
-      if (sse) { sse.close(); sse = null; }
-
-      resetCompactLog();
-      setStep("start", "⏳ Iniciando...");
-
-      const fd = new FormData();
-      fd.append("order_numbers_json", hiddenOrdersJson.value || "[]");
-      selectedFiles.forEach(f => fd.append("photos", f, f.name));
-
       submitBtn.disabled = true;
 
-      try {
-        const res  = await fetch("/start_upload", { method: "POST", body: fd });
-        const data = await res.json();
-
-        if (!data.success) {
-          setStep("done", "❌ No se pudo iniciar la subida.", "error");
-          updateSubmitState();
-          return;
-        }
-
-        sse = new EventSource(`/progress/${data.job_id}`);
-
-        sse.addEventListener("message", (e) => handleBackendMsg(e.data, "info"));
-        sse.addEventListener("warn",    (e) => handleBackendMsg(e.data, "warn"));
-        sse.addEventListener("error",   (e) => handleBackendMsg(e.data, "error"));
-        sse.addEventListener("done",    (e) => handleBackendMsg(e.data, "done"));
-
-        sse.addEventListener("final", (e) => {
-          if (sse) { sse.close(); sse = null; }
-          try {
-            const payload = JSON.parse(e.data);
-            if (payload.ok) {
-              const orders = (payload.result?.orders || []).map(o => o.order_number);
-              showSuccess(orders);
-            } else {
-              setStep("done", "❌ Terminó con error.", "error");
-              updateSubmitState();
-            }
-          } catch {
-            setStep("done", "⚠️ Final recibido, pero no se pudo leer.", "warn");
-            updateSubmitState();
-          }
-        });
-
-      } catch {
-        setStep("done", "❌ Error de red.", "error");
-        submitBtn.textContent = "SUBIR FOTOS";
-        updateSubmitState();
+      const job = await UploadQueue.finalizeJob();
+      if (!job) {
+        submitBtn.disabled = false;
+        return;
       }
+
+      showToast("📥 En cola — se sube solo cuando haya señal.");
+      await nudgeServiceWorker();
+      await resetAll();
+      await refreshQueuePanel();
     });
 
-    // ====== Pantalla de éxito ======
-    let _successTimer = null;
+    // ====== Panel: Cola de subidas ======
+    const STATUS_LABEL = {
+      draft:    { text: "📝 Borrador",  cls: "text-gray-600" },
+      queued:   { text: "🕓 Pendiente", cls: "text-amber-600" },
+      uploading:{ text: "⬆️ Subiendo",  cls: "text-blue-600" },
+      done:     { text: "✅ Listo",     cls: "text-green-700" },
+      error:    { text: "❌ Error",     cls: "text-red-600" },
+    };
 
-    function showSuccess(orderNumbers) {
-      const overlay = document.getElementById('success_overlay');
-      const opsEl   = document.getElementById('success_ops');
-      const cdEl    = document.getElementById('success_countdown');
+    async function refreshQueuePanel() {
+      const jobs = (await UploadQueue.getAllJobs()).filter(j => j.status !== 'draft');
 
-      opsEl.textContent = orderNumbers.length
-        ? orderNumbers.join(" · ")
-        : "";
+      if (!jobs.length) {
+        queueList.innerHTML = "";
+        queueEmpty.classList.remove("hidden");
+        return;
+      }
+      queueEmpty.classList.add("hidden");
 
-      overlay.classList.remove('hidden');
+      queueList.innerHTML = "";
+      jobs.forEach((job) => {
+        const st = STATUS_LABEL[job.status] || STATUS_LABEL.queued;
+        const clientes = (job.orders || []).map(o => o.op).join(", ");
 
-      let secs = 6;
-      cdEl.textContent = `Se cerrará solo en ${secs} seg.`;
-      _successTimer = setInterval(() => {
-        secs--;
-        cdEl.textContent = `Se cerrará solo en ${secs} seg.`;
-        if (secs <= 0) dismissSuccess();
-      }, 1000);
+        const row = document.createElement("div");
+        row.className = "flex items-center justify-between bg-gray-50 border rounded-lg p-3 text-sm";
+
+        // Los jobs terminados liberan sus fotos para no llenar el teléfono, así que
+        // el conteo se guarda aparte al marcarlos como listos.
+        const nFotos = job.photo_count != null
+          ? job.photo_count
+          : (job.photos ? job.photos.length : 0);
+
+        const left = document.createElement("div");
+        left.className = "min-w-0";
+        left.innerHTML = `
+          <div class="font-black text-gray-800 truncate">${esc(clientes) || "(sin OP)"}</div>
+          <div class="text-xs text-gray-500 truncate">${nFotos} foto(s)${job.error ? " · " + esc(job.error) : ""}</div>
+        `;
+
+        const right = document.createElement("div");
+        right.className = "flex items-center gap-2 shrink-0 ml-3";
+        const badge = document.createElement("span");
+        badge.className = "font-bold " + st.cls;
+        badge.textContent = st.text;
+        right.appendChild(badge);
+
+        // Un error permanente (orden inexistente, OPs de clientes distintos) ya no se
+        // reintenta solo. Si el problema se corrigió en Salesforce, este botón reencola
+        // el job sin perder las fotos.
+        if (job.status === "error" && job.photos && job.photos.length) {
+          const retry = document.createElement("button");
+          retry.type = "button";
+          retry.className = "text-xs font-black text-blue-600 hover:underline";
+          retry.textContent = "Reintentar";
+          retry.onclick = async () => {
+            retry.disabled = true;
+            await UploadQueue.retryJob(job.job_id);
+            await nudgeServiceWorker();
+            refreshQueuePanel();
+          };
+          right.appendChild(retry);
+        }
+
+        if (job.status === "done" || job.status === "error") {
+          const dismiss = document.createElement("button");
+          dismiss.type = "button";
+          dismiss.className = "text-xs text-gray-400 hover:text-gray-700";
+          dismiss.textContent = "✕";
+          dismiss.onclick = async () => {
+            await UploadQueue.dismissJob(job.job_id);
+            refreshQueuePanel();
+          };
+          right.appendChild(dismiss);
+        }
+
+        row.appendChild(left);
+        row.appendChild(right);
+        queueList.appendChild(row);
+      });
     }
 
-    function dismissSuccess() {
-      if (_successTimer) { clearInterval(_successTimer); _successTimer = null; }
-      document.getElementById('success_overlay').classList.add('hidden');
-      resetAll();
-    }
+    // ====== Service Worker ======
+    async function initServiceWorker() {
+      if (!('serviceWorker' in navigator)) return;
 
-    // Init
-    bloquearForm();
-    renderOrders();
-
-    // Si Android recargó la página al volver de la cámara, restaurar órdenes
-    (function () {
-      const saved = sessionStorage.getItem('cc_orders');
-      if (!saved) return;
+      // Si el registro falla (navegador sin soporte, error en sw.js), la app tiene que
+      // seguir funcionando: sin esto la excepción cortaba el resto del init y no se
+      // podían ni tomar fotos.
+      let reg;
       try {
-        const orders = JSON.parse(saved);
-        if (!Array.isArray(orders) || !orders.length) return;
-        selectedOrders = orders;
-        clientNameRef  = sessionStorage.getItem('cc_client') || null;
-        const first    = orders[0];
-        input.value    = first.raw || '';
-        display.innerText   = "✅ Orden: " + (first.name || first.op);
+        reg = await navigator.serviceWorker.register('/sw.js');
+      } catch (e) {
+        showToast("⚠️ Sin modo offline: no se pudo iniciar el Service Worker.", 5000);
+        return;
+      }
+
+      navigator.serviceWorker.addEventListener('message', (e) => {
+        if (e.data && e.data.type === 'job-status') refreshQueuePanel();
+      });
+      // Respaldo: si por algún motivo Background Sync no disparó, reintentar al reabrir/reconectar
+      window.addEventListener('online', () => reg.active?.postMessage({ type: 'try-upload' }));
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          reg.active?.postMessage({ type: 'try-upload' });
+          refreshQueuePanel();
+        }
+      });
+    }
+
+    // ====== Init ======
+    (async function init() {
+      bloquearForm();
+      renderOrders();
+      await initServiceWorker();
+
+      // Borra jobs viejos con sus fotos. También lo hace el Service Worker al
+      // activarse, pero eso solo pasa cuando cambia sw.js.
+      try { await UploadQueue.purgeOldJobs(); } catch (e) { /* no es crítico */ }
+
+      const draft = await UploadQueue.getDraftJob();
+      if (draft && draft.orders && draft.orders.length) {
+        selectedOrders = draft.orders;
+        clientNameRef  = draft.orders[0].client_name || null;
+        const first = draft.orders[0];
+        input.value = first.raw || '';
+        display.innerText = "✅ Orden: " + (first.name || first.op);
         display.style.color = "#059669";
         display.classList.remove('hidden');
         renderOrders();
         habilitarForm();
-      } catch {}
+      }
+      await renderPreviewFromDraft();
+      await refreshQueuePanel();
+      setInterval(refreshQueuePanel, 4000);
     })();
   </script>
-</body>
-</html>
+{% endblock %}

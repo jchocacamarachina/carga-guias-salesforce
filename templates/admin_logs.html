@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema de Logs — Admin</title>
+  <!-- No extiende base.html a propósito: es una consola de diagnóstico con su propio
+       tema oscuro, no comparte nada con las pantallas de los repartidores. -->
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d1117; color: #c9d1d9; font-family: 'Courier New', monospace; font-size: 13px; }
+    header { background: #161b22; border-bottom: 1px solid #30363d; padding: 14px 20px; display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 15px; color: #58a6ff; font-weight: bold; }
+    header span { font-size: 11px; color: #8b949e; }
+    #controls { padding: 10px 20px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    button { padding: 5px 12px; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 12px; }
+    button:hover { background: #30363d; }
+    button.active { border-color: #58a6ff; color: #58a6ff; }
+    #filter { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 5px 10px; border-radius: 6px; font-size: 12px; width: 220px; }
+    #log-container { padding: 16px 20px; overflow-y: auto; height: calc(100vh - 110px); }
+    .log-entry { display: flex; gap: 10px; padding: 5px 8px; border-radius: 4px; margin-bottom: 2px; border-left: 3px solid transparent; }
+    .log-entry:hover { background: #161b22; }
+    .ts { color: #6e7681; min-width: 155px; }
+    .icon { min-width: 24px; }
+    .msg { flex: 1; word-break: break-all; }
+    .ctx { color: #8b949e; font-size: 11px; margin-left: 4px; }
+    .level-DEBUG { border-left-color: #8b949e; }
+    .level-INFO { border-left-color: #58a6ff; }
+    .level-WARNING { border-left-color: #d29922; color: #e3b341; }
+    .level-ERROR { border-left-color: #f85149; color: #ff7b72; }
+    .level-CRITICAL { border-left-color: #da3633; background: #2d1117; color: #ff7b72; font-weight: bold; }
+    #status { position: fixed; bottom: 12px; right: 16px; font-size: 11px; color: #8b949e; }
+    #status.live { color: #3fb950; }
+    .empty { color: #6e7681; text-align: center; margin-top: 60px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>🛠 Panel de Diagnóstico</h1>
+  <span id="log-count">— entradas</span>
+</header>
+<div id="controls">
+  <button onclick="setFilter('ALL')" class="active" id="btn-ALL">Todos</button>
+  <button onclick="setFilter('DEBUG')" id="btn-DEBUG">🔍 Debug</button>
+  <button onclick="setFilter('INFO')" id="btn-INFO">ℹ️ Info</button>
+  <button onclick="setFilter('WARNING')" id="btn-WARNING">⚠️ Warning</button>
+  <button onclick="setFilter('ERROR')" id="btn-ERROR">❌ Error</button>
+  <button onclick="setFilter('CRITICAL')" id="btn-CRITICAL">🔥 Critical</button>
+  <input id="filter" placeholder="Filtrar texto..." oninput="applyFilter()">
+  <button onclick="clearDisplay()">Limpiar vista</button>
+  <button onclick="reloadAll()">⟳ Refrescar</button>
+</div>
+<div id="log-container"><p class="empty">Cargando logs...</p></div>
+<div id="status">conectando...</div>
+
+<script>
+  let allLogs = [];
+  let activeLevel = 'ALL';
+  let lastSeq = 0;
+  const MAX_KEEP = 500;
+  const token = new URLSearchParams(location.search).get('token');
+  const container = document.getElementById('log-container');
+  const statusEl = document.getElementById('status');
+
+  function renderLogs() {
+    const text = document.getElementById('filter').value.toLowerCase();
+    const filtered = allLogs.filter(l => {
+      const matchLevel = activeLevel === 'ALL' || l.level === activeLevel;
+      const matchText = !text || l.msg.toLowerCase().includes(text) || JSON.stringify(l.ctx).toLowerCase().includes(text);
+      return matchLevel && matchText;
+    });
+
+    document.getElementById('log-count').textContent = filtered.length + ' entradas';
+
+    if (!filtered.length) {
+      container.innerHTML = '<p class="empty">No hay logs con ese filtro.</p>';
+      return;
+    }
+
+    const wasAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+
+    container.innerHTML = filtered.map(l => {
+      const ctx = Object.keys(l.ctx).length ? `<span class="ctx">${escHtml(JSON.stringify(l.ctx))}</span>` : '';
+      return `<div class="log-entry level-${escHtml(l.level)}">
+        <span class="ts">${escHtml(l.ts)}</span>
+        <span class="icon">${escHtml(l.icon)}</span>
+        <span class="msg">${escHtml(l.msg)}${ctx}</span>
+      </div>`;
+    }).join('');
+
+    if (wasAtBottom) container.scrollTop = container.scrollHeight;
+  }
+
+  function escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function setFilter(level) {
+    activeLevel = level;
+    document.querySelectorAll('[id^=btn-]').forEach(b => b.classList.remove('active'));
+    document.getElementById('btn-' + level).classList.add('active');
+    renderLogs();
+  }
+
+  function applyFilter() { renderLogs(); }
+
+  // Limpia la vista sin volver a traer lo ya visto: `lastSeq` se mantiene.
+  function clearDisplay() { allLogs = []; renderLogs(); }
+
+  function reloadAll() { allLogs = []; lastSeq = 0; poll(); }
+
+  async function poll() {
+    try {
+      const res = await fetch('/admin/logs/json?since=' + lastSeq + '&token=' + encodeURIComponent(token));
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const nuevos = await res.json();
+      if (nuevos.length) {
+        for (const entry of nuevos) {
+          if (entry.seq > lastSeq) lastSeq = entry.seq;
+        }
+        allLogs = allLogs.concat(nuevos).slice(-MAX_KEEP);
+      }
+      statusEl.textContent = '● En vivo';
+      statusEl.className = 'live';
+      if (nuevos.length || !container.dataset.ready) {
+        container.dataset.ready = '1';
+        renderLogs();
+      }
+    } catch (e) {
+      statusEl.textContent = '⚠ Sin conexión — reintentando...';
+      statusEl.className = '';
+    }
+  }
+
+  poll();
+  setInterval(poll, 2000);
+</script>
+</body>
+</html>

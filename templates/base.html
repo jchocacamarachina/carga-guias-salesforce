@@ -1,0 +1,30 @@
+{# Cabecera y helpers comunes a las tres pantallas. Antes cada template repetía el
+   <head> completo y su propia copia de esc()/escHtml(), y al cambiar el CSS del CDN
+   al local hubo que tocar los tres por separado. #}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Guías de Entrega{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+  <link rel="icon" href="/static/img/icon.svg" type="image/svg+xml" />
+  <meta name="theme-color" content="#2563eb" />
+  {% block head %}{% endblock %}
+  <script>
+    // Escapa texto antes de interpolarlo en innerHTML. Los nombres de cliente vienen
+    // de Salesforce y los mensajes de error del servidor: nada de eso se inyecta crudo.
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    // Alias histórico usado por la pantalla de historial.
+    const escHtml = esc;
+  </script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+{% block content %}{% endblock %}
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,13 +1,9 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Control de Entregas</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-100 min-h-screen">
+{% extends "base.html" %}
 
+{% block title %}Control de Entregas{% endblock %}
+{% block body_class %}bg-gray-100 min-h-screen{% endblock %}
+
+{% block content %}
   <div class="bg-white border-b shadow-sm">
     <div class="max-w-xl mx-auto px-4 py-3 flex items-center justify-between">
       <p class="font-black text-gray-800">Control de Entregas</p>
@@ -66,26 +62,50 @@
     </div>
 
   </div>
+{% endblock %}
 
+{% block scripts %}
   <script>
-    let names     = [];
-    let pollTimer = null;
+    let names      = [];
+    let pollTimer  = null;
+    let serverDate = null;  // día actual según el servidor (hora Ecuador)
+    let listaDate  = null;  // día al que pertenece la lista cargada
 
-    (function mostrarFecha() {
-      const meses = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-      const hoyDate = new Date();
-      document.getElementById('fecha_hoy').textContent =
-        `${hoyDate.getDate()} de ${meses[hoyDate.getMonth()]} de ${hoyDate.getFullYear()}`;
-    })();
+    const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
-    function esc(s) {
-      return String(s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    // La fecha se toma del servidor cuando llega. Se formatea a mano en vez de con
+    // new Date("2026-06-24") porque eso se interpreta como UTC y en Ecuador (-5)
+    // mostraría el día anterior.
+    function mostrarFecha(dateKey) {
+      const el = document.getElementById('fecha_hoy');
+      if (dateKey) {
+        const [y, m, d] = dateKey.split('-').map(Number);
+        el.textContent = `${d} de ${MESES[m - 1]} de ${y}`;
+      } else {
+        const n = new Date();
+        el.textContent = `${n.getDate()} de ${MESES[n.getMonth()]} de ${n.getFullYear()}`;
+      }
+    }
+    mostrarFecha(null);
+
+    // Mayúsculas, sin acentos y sin puntuación: "José Pérez-Gómez" y "JOSE PEREZ GOMEZ"
+    // tienen que caer en la misma clave.
+    function norm(n) {
+      return (n || '')
+        // NFD separa "É" en "E" + tilde suelta; los guiones y puntos pasan a espacio
+        // ANTES de borrar, para no pegar dos apellidos ("PEREZ-GOMEZ" → "PEREZ GOMEZ").
+        .normalize('NFD')
+        .toUpperCase()
+        .replace(/[\s\-_.,;:'"()\/]+/g, ' ')
+        // Lo que sobra (tildes sueltas, símbolos) se borra sin dejar espacio, así
+        // "JOSE" no se convierte en "JOS E".
+        .replace(/[^A-Z0-9 ]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
     }
 
-    function norm(n) {
-      return (n || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    function tokens(n) {
+      return n ? n.split(' ').filter(Boolean) : [];
     }
 
     function parsePastedNames(text) {
@@ -99,23 +119,47 @@
         });
     }
 
+    // Exige nombre exacto, o que todos los tokens del nombre más corto estén en el más
+    // largo con al menos 2 tokens (nombre + apellido). Antes bastaba un substring en
+    // cualquier dirección, así que "JUAN" marcaba como entregado a "JUAN PEREZ" y
+    // cualquier nombre contenido en otro daba falso positivo.
+    // Si coincide más de un cliente se devuelve null: es preferible dejarlo pendiente
+    // que marcar como entregado al equivocado.
     function findMatch(name, map) {
       if (map[name]) return map[name];
+
+      const want = tokens(name);
+      if (want.length < 2) return null;
+
+      const hits = [];
       for (const [key, val] of Object.entries(map)) {
-        if (key.includes(name) || name.includes(key)) return val;
+        const have = tokens(key);
+        if (have.length < 2) continue;
+        const [chico, grande] = want.length <= have.length ? [want, have] : [have, want];
+        const setGrande = new Set(grande);
+        if (chico.every(t => setGrande.has(t))) hits.push(val);
       }
-      return null;
+      return hits.length === 1 ? hits[0] : null;
     }
 
-    function hoy() {
-      return new Date().toISOString().slice(0, 10); // "2026-06-24"
+    function persistLista() {
+      localStorage.setItem('luis_lista', JSON.stringify({ date: listaDate, names }));
+    }
+
+    function mostrarInput() {
+      document.getElementById('checklist_section').classList.add('hidden');
+      document.getElementById('input_section').classList.remove('hidden');
     }
 
     function cargarLista() {
       const parsed = parsePastedNames(document.getElementById('names_input').value);
       if (!parsed.length) return;
       names = parsed;
-      localStorage.setItem('luis_lista', JSON.stringify({ date: hoy(), names }));
+      // Si el servidor todavía no respondió queda null y se adopta su día en el
+      // primer fetch — así nunca se compara contra la fecha (posiblemente desfasada)
+      // del teléfono.
+      listaDate = serverDate;
+      persistLista();
       document.getElementById('input_section').classList.add('hidden');
       document.getElementById('checklist_section').classList.remove('hidden');
       startPolling();
@@ -126,15 +170,42 @@
       document.getElementById('names_input').value = names.join('\n');
       localStorage.removeItem('luis_lista');
       names = [];
-      document.getElementById('checklist_section').classList.add('hidden');
-      document.getElementById('input_section').classList.remove('hidden');
+      listaDate = null;
+      mostrarInput();
+    }
+
+    // La lista quedó de un día anterior: el servidor ya pasó de fecha. Se conserva en
+    // el textarea para poder recargarla si las entregas de hoy son las mismas.
+    function listaVencida() {
+      stopPolling();
+      document.getElementById('names_input').value = names.join('\n');
+      localStorage.removeItem('luis_lista');
+      names = [];
+      listaDate = null;
+      mostrarInput();
+      const dot = document.getElementById('sync_dot');
+      dot.textContent = 'lista de otro día — volvé a cargarla';
+      dot.className = 'text-xs text-amber-600';
     }
 
     async function fetchAndUpdate() {
       try {
         const res  = await fetch('/api/history');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
-        renderCards(data);
+
+        serverDate = data.date_key || null;
+        mostrarFecha(serverDate);
+
+        if (listaDate == null) {
+          listaDate = serverDate;
+          persistLista();
+        } else if (serverDate && listaDate !== serverDate) {
+          listaVencida();
+          return;
+        }
+
+        renderCards(data.deliveries || []);
         document.getElementById('sync_dot').textContent = 'en vivo ●';
         document.getElementById('sync_dot').className = 'text-xs text-green-500';
       } catch {
@@ -143,12 +214,14 @@
       }
     }
 
-    function renderCards(history) {
-      // Mapa: nombre normalizado → { time }
+    // `deliveries` ya viene filtrado al día de hoy por el servidor.
+    function renderCards(deliveries) {
+      // Mapa: nombre normalizado → { time }. Si un cliente tiene varias OP entregadas,
+      // vale la primera (la lista viene de la más reciente a la más antigua).
       const map = {};
-      history.forEach(e => {
+      deliveries.forEach(e => {
         const k = norm(e.client);
-        if (k && !map[k]) map[k] = { time: e.time, date: e.date };
+        if (k && !map[k]) map[k] = { time: e.time };
       });
 
       let doneCount = 0;
@@ -197,9 +270,9 @@
       stopPolling();
       localStorage.removeItem('luis_lista');
       names = [];
+      listaDate = null;
       document.getElementById('names_input').value = '';
-      document.getElementById('checklist_section').classList.add('hidden');
-      document.getElementById('input_section').classList.remove('hidden');
+      mostrarInput();
     }
 
     function startPolling() {
@@ -211,18 +284,18 @@
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     }
 
-    // Restaurar lista al recargar (solo si es del mismo día)
+    // Restaurar lista al recargar. La validación de "¿es de hoy?" la hace
+    // fetchAndUpdate comparando contra el día del servidor, no contra el reloj del
+    // teléfono: si el celular tiene otra zona horaria, la fecha local podía descartar
+    // una lista válida (o conservar una vencida).
     (function () {
       const saved = localStorage.getItem('luis_lista');
       if (!saved) return;
       try {
         const obj = JSON.parse(saved);
-        if (obj.date !== hoy()) {
-          localStorage.removeItem('luis_lista');
-          return;
-        }
         if (Array.isArray(obj.names) && obj.names.length) {
           names = obj.names;
+          listaDate = obj.date || null;
           document.getElementById('input_section').classList.add('hidden');
           document.getElementById('checklist_section').classList.remove('hidden');
           startPolling();
@@ -230,6 +303,4 @@
       } catch {}
     })();
   </script>
-
-</body>
-</html>
+{% endblock %}

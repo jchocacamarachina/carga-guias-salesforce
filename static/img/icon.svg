@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Guías de Entrega">
+  <!-- Fondo a sangre: necesario para iconos "maskable" (Android recorta los bordes).
+       Todo el dibujo queda dentro del 80% central, la zona segura. -->
+  <rect width="512" height="512" fill="#2563eb"/>
+  <g fill="#ffffff">
+    <!-- Visor de la cámara -->
+    <rect x="216" y="148" width="80" height="36" rx="14"/>
+    <!-- Cuerpo -->
+    <rect x="112" y="176" width="288" height="192" rx="30"/>
+  </g>
+  <!-- Lente -->
+  <circle cx="256" cy="272" r="58" fill="#2563eb"/>
+  <circle cx="256" cy="272" r="34" fill="#ffffff"/>
+  <!-- Check de "entregado" -->
+  <path d="M330 386 l30 30 l58 -66" fill="none" stroke="#ffffff" stroke-width="26"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,13 +1,9 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Historial de Entregas</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-50 min-h-screen">
+{% extends "base.html" %}
 
+{% block title %}Historial de Entregas{% endblock %}
+{% block body_class %}bg-gray-50 min-h-screen{% endblock %}
+
+{% block content %}
   <header class="bg-white border-b border-gray-200 px-4 py-4 sticky top-0 z-10">
     <div class="max-w-2xl mx-auto flex items-center justify-between">
       <div>
@@ -46,9 +42,16 @@
   {% endif %}
 
   <p id="last-update" class="text-center text-xs text-gray-300 pb-4"></p>
+{% endblock %}
 
+{% block scripts %}
   <script>
     let cargando = false;
+
+    // Clave de admin, presente solo si se entró por /historial/<clave> con la clave
+    // correcta. El endpoint de borrado la exige por header: antes era un POST público
+    // que cualquiera podía llamar para vaciar el historial entero.
+    const ADMIN_KEY = {{ (admin_key or "") | tojson }};
 
     async function cargar(manual = false) {
       if (cargando) return;
@@ -64,7 +67,7 @@
         document.getElementById('last-update').textContent = 'Última actualización: ' + ahora;
       } catch (e) {
         document.getElementById('content').innerHTML =
-          '<p class="text-center text-red-400 mt-16">No se pudo cargar el historial.<br><span class="text-xs text-gray-400">' + e.message + '</span></p>';
+          '<p class="text-center text-red-400 mt-16">No se pudo cargar el historial.<br><span class="text-xs text-gray-400">' + esc(e.message) + '</span></p>';
       } finally {
         cargando = false;
         document.getElementById('btn-icon').textContent = '⟳';
@@ -89,7 +92,7 @@
       content.innerHTML = days.map(day => `
         <div class="mb-8">
           <div class="flex items-center gap-3 mb-3">
-            <h2 class="text-sm font-bold text-gray-600 uppercase tracking-wide">${escHtml(day.day_label)}</h2>
+            <h2 class="text-sm font-bold text-gray-600 uppercase tracking-wide">${esc(day.day_label)}</h2>
             <span class="text-xs bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-full">${day.deliveries.length}</span>
           </div>
           <div class="space-y-2">
@@ -101,12 +104,20 @@
 
     function renderEntrega(d) {
       const fotos = parseInt(d.photo_count) || 0;
+
+      // La entrega se guardó pero el cliente nunca recibió su mensaje: hay que
+      // reenviarlo a mano. Sin esta marca la falla era invisible.
+      const avisoPendiente = d.webhook_ok === false
+        ? `<p class="text-xs text-amber-600 font-bold mt-0.5">⚠️ El cliente no recibió el aviso</p>`
+        : '';
+
       return `
         <div class="bg-white border border-gray-100 rounded-xl px-4 py-3 shadow-sm flex items-center gap-4">
-          <span class="text-blue-600 font-mono font-bold text-sm min-w-[40px]">${escHtml(d.time)}</span>
+          <span class="text-blue-600 font-mono font-bold text-sm min-w-[40px]">${esc(d.time)}</span>
           <div class="flex-1 min-w-0">
-            <p class="font-semibold text-gray-800 text-sm truncate">${escHtml(d.client)}</p>
-            <p class="text-xs text-gray-400 mt-0.5">${escHtml(d.op)}</p>
+            <p class="font-semibold text-gray-800 text-sm truncate">${esc(d.client)}</p>
+            <p class="text-xs text-gray-400 mt-0.5">${esc(d.op)}</p>
+            ${avisoPendiente}
           </div>
           <span class="text-xs text-gray-400 shrink-0">${fotos} foto${fotos !== 1 ? 's' : ''}</span>
         </div>
@@ -125,7 +136,14 @@
 
     async function borrar(params) {
       try {
-        const res  = await fetch('/api/historial/borrar' + params, { method: 'POST' });
+        const res = await fetch('/api/historial/borrar' + params, {
+          method: 'POST',
+          headers: { 'X-Admin-Key': ADMIN_KEY },
+        });
+        if (res.status === 403) {
+          alert('No autorizado. Abrí la página con la clave de admin en la URL.');
+          return;
+        }
         const data = await res.json();
         if (data.ok) {
           alert('Listo. Se borraron ' + data.deleted + ' entradas.');
@@ -138,14 +156,7 @@
       }
     }
 
-    function escHtml(s) {
-      return String(s || '')
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
     cargar();
     setInterval(cargar, 60000);
   </script>
-</body>
-</html>
+{% endblock %}

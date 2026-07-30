@@ -1,0 +1,26 @@
+{
+  "name": "Guías de Entrega",
+  "short_name": "Entregas",
+  "description": "Registro fotográfico de entregas. Funciona sin señal: las fotos se guardan en el teléfono y se suben solas cuando hay cobertura.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f1f5f9",
+  "theme_color": "#2563eb",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "/static/img/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/img/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "maskable"
+    }
+  ]
+}
