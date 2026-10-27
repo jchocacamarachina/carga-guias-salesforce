@@ -1,6 +1,6 @@
 // Comprime una foto de cámara antes de guardarla/subirla: reduce dimensiones y
 // re-codifica a JPEG con calidad media. Corre en la página (no en el Service Worker).
-async function compressImage(file, { maxDim = 1600, quality = 0.75 } = {}) {
+async function compressImage(file, { maxDim = 1024, quality = 0.65 } = {}) {
   // imageOrientation explícito: sin esto, algunos navegadores descartan la rotación EXIF
   // al decodificar y la foto queda "acostada" una vez recomprimida.
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });

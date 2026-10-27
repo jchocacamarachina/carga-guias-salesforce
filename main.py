@@ -22,7 +22,7 @@ from simple_salesforce import Salesforce, format_soql
 app = Flask(__name__)
 
 # Las fotos se leen enteras en memoria antes de subirlas, así que un POST gigante
-# tumbaría el proceso. Con compresión previa (1600px / q0.75) una foto pesa ~300 KB.
+# tumbaría el proceso. Con compresión previa (1024px / q0.65) una foto pesa ~60 KB.
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "40"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 

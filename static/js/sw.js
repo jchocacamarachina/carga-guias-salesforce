@@ -8,7 +8,7 @@ importScripts('/static/js/idb-queue.js');
 // IMPORTANTE: subir este número al cambiar app.css, index.html o los JS. Los estáticos
 // se sirven desde caché primero y se refrescan en segundo plano, así que sin bump el
 // repartidor sigue viendo la versión anterior hasta la siguiente apertura de la app.
-const CACHE = 'entregas-shell-v2';
+const CACHE = 'entregas-shell-v3';
 
 // Todo same-origin: si un recurso viniera de un CDN, install fallaría sin red y el
 // SW nunca se activaría.
