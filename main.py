@@ -61,6 +61,33 @@ def ahora_ec_iso() -> str:
     return datetime.now(_ECUADOR).isoformat()
 
 
+# El celular nombra cada foto con la hora de la toma en UTC (templates/index.html:
+# new Date().toISOString() → foto_2026-11-24T15-03-22-123Z.jpg). Ese nombre viaja
+# intacto por la cola offline hasta el servidor, así que es la hora real de la foto
+# aunque la subida llegue horas después.
+_FOTO_TS = re.compile(r"foto_(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z")
+
+
+def hora_foto_ec(filenames) -> str | None:
+    """Hora de la última foto tomada, en hora Ecuador: 'dd-mm-aaaa HH:MM:SS'.
+
+    None si ningún nombre trae la hora (no se inventa una con la hora del servidor).
+    """
+    tomas = []
+    for name in filenames:
+        m = _FOTO_TS.search(name or "")
+        if not m:
+            continue
+        y, mo, d, h, mi, s, ms = (int(x) for x in m.groups())
+        try:
+            tomas.append(datetime(y, mo, d, h, mi, s, ms * 1000, tzinfo=timezone.utc))
+        except ValueError:
+            continue
+    if not tomas:
+        return None
+    return max(tomas).astimezone(_ECUADOR).strftime("%d-%m-%Y %H:%M:%S")
+
+
 def _secret_ok(provided: str | None, expected: str | None) -> bool:
     """Comparación en tiempo constante. Fail-closed si el secreto no está configurado.
 
@@ -488,6 +515,14 @@ def process_upload(job_id: str, order_numbers_raw: list[str], files_payload: lis
             )
             return _fail(msg)
 
+        # Fecha de entrega al cliente = hora de la última foto, en hora Ecuador.
+        # Fecha_de_Entrega_a_Cliente__c es un campo de texto en Salesforce.
+        fecha_entrega = hora_foto_ec(f["filename"] for f in files_payload)
+        if not fecha_entrega:
+            syslog("WARNING", f"[job:{job_id}] Ninguna foto trae la hora de la toma; "
+                   "Fecha_de_Entrega_a_Cliente__c no se llena",
+                   {"archivos": [f["filename"] for f in files_payload]})
+
         results_per_order = []
         for order in orders_info:
             try:
@@ -499,9 +534,10 @@ def process_upload(job_id: str, order_numbers_raw: list[str], files_payload: lis
                     f'<a href="{url}">Foto {i}</a>'
                     for i, url in enumerate(public_urls, 1)
                 )
-                sf_active.Orden_Proveedor__c.update(order["record_id"], {
-                    "Link_Guia_de_Entrega__c": links_html
-                })
+                campos = {"Link_Guia_de_Entrega__c": links_html}
+                if fecha_entrega:
+                    campos["Fecha_de_Entrega_a_Cliente__c"] = fecha_entrega
+                sf_active.Orden_Proveedor__c.update(order["record_id"], campos)
                 results_per_order.append({
                     "order_id": order["record_id"],
                     "order_number": order["op"],

@@ -332,3 +332,24 @@ def test_logs_json_filtra_por_since(client, app_mod):
     res = client.get(f"/admin/logs/json?since={ultimo_seq - 1}",
                      headers={"X-Admin-Token": "token-de-prueba"})
     assert len(res.get_json()) == 1
+
+
+# ---------- hora_foto_ec (Fecha_de_Entrega_a_Cliente__c) ----------
+def test_hora_foto_ec_convierte_utc_a_ecuador(app_mod):
+    # 15:03:22 UTC = 10:03:22 en Ecuador (UTC-5)
+    assert app_mod.hora_foto_ec(["foto_2026-11-24T15-03-22-123Z.jpg"]) == "24-11-2026 10:03:22"
+
+
+def test_hora_foto_ec_cambia_de_dia(app_mod):
+    # 03:10 UTC del 25 todavía es 22:10 del 24 en Ecuador
+    assert app_mod.hora_foto_ec(["foto_2026-11-25T03-10-00-000Z.jpeg"]) == "24-11-2026 22:10:00"
+
+
+def test_hora_foto_ec_toma_la_ultima_foto(app_mod):
+    nombres = ["foto_2026-11-24T15-03-22-123Z.jpg", "foto_2026-11-24T15-07-45-900Z.jpg",
+               "foto_2026-11-24T15-05-00-000Z.jpg"]
+    assert app_mod.hora_foto_ec(nombres) == "24-11-2026 10:07:45"
+
+
+def test_hora_foto_ec_sin_hora_devuelve_none(app_mod):
+    assert app_mod.hora_foto_ec(["IMG_1234.jpg", "", None]) is None
